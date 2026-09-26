@@ -1,0 +1,35 @@
+services:
+  app:
+    build: .
+    ports: ["5000:5000"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env before starting Compose}
+      FLASK_ENV: development
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_NAME: cloudops
+      DB_USER: cloudops
+      DB_PASSWORD: ${DB_PASSWORD:-cloudops-local}
+      USE_AWS_SECRETS: "false"
+      ENABLE_LAB_FAILURE_ENDPOINTS: ${ENABLE_LAB_FAILURE_ENDPOINTS:-false}
+      APP_VERSION: ${APP_VERSION:-local}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    restart: unless-stopped
+  mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: cloudops
+      MARIADB_USER: cloudops
+      MARIADB_PASSWORD: ${DB_PASSWORD:-cloudops-local}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root-local-only}
+    volumes: ["mariadb_data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+volumes:
+  mariadb_data:

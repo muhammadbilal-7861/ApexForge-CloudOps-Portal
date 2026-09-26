@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block title %}Service error · ApexForge{% endblock %}{% block heading %}Application error{% endblock %}{% block content %}<p class="text-secondary">The application encountered an unexpected error. Use the request ID below to find its log entry.</p><code>{{ request.environ.get('HTTP_X_REQUEST_ID','') }}</code>{% endblock %}
