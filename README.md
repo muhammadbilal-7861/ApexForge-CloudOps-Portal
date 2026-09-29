@@ -109,7 +109,46 @@ python -m compileall -q app wsgi.py
 docker build -t apexforge-cloudops:local .
 ```
 
-The CI workflow runs pytest and a Docker build. Future deployment is intentionally a TODO: GitHub OIDC -> AWS IAM role -> ECR -> EC2/ASG. No static AWS key secrets are used.
+The existing GitHub Actions workflow runs pytest and a Docker build. The Jenkins pipeline below separately publishes the validated `main` image to ECR using the EC2 instance role; production deployment remains a later step. No static AWS key secrets are used.
+
+## Jenkins DevSecOps pipeline
+
+`Jenkinsfile` provides a repository-side CI and security pipeline. On `main`, after all configured checks pass, it pushes the scanned image to the existing ECR repository. It does not deploy to production or create/change infrastructure. The existing GitHub Actions workflow remains independent.
+
+### Pipeline stages
+
+1. Checkout and record branch, commit, agent, image tag, and health endpoints.
+2. Run Gitleaks against the checked-out Git history. Findings fail the build; SARIF output is redacted and archived.
+3. Install the declared Python dependencies in an isolated Python 3.12 container, then run pytest and publish JUnit results.
+4. Run SonarQube SAST/quality analysis and wait for the configured Quality Gate.
+5. Run Trivy filesystem/SCA analysis for dependency vulnerabilities and misconfiguration. The table is printed to the build log and JSON is archived. Gitleaks is the dedicated secret scanner; its report is redacted so findings are not copied into build artifacts.
+6. Detect Terraform and CloudFormation files. If present, run Trivy config validation; otherwise report that the extension point is currently unused.
+7. Build the existing Dockerfile, then print and archive a Trivy image vulnerability report.
+8. Archive security reports. On the `main` branch only, verify the caller is account `489502663059` and role `DevSecOpsToolsRole`, log in to ECR with `aws ecr get-login-password`, then push the scanned image tagged with its Git commit. The production approval/deployment stage remains a no-op placeholder.
+
+`TRIVY_SEVERITY` and `TRIVY_EXIT_CODE` are Jenkins build parameters. Defaults are `HIGH,CRITICAL` and `1`: high/critical findings fail both filesystem and image scans. Set exit code to `0` for report-only operation during rollout; reports remain visible. Gitleaks findings and failed tests always fail. SonarQube's Quality Gate is configured to abort the pipeline when it fails. Reports are archived even when a later stage fails.
+
+### Jenkins prerequisites and credentials
+
+Use a Linux agent labelled `linux && docker` with Docker CLI access to the EC2 host's daemon. Jenkins must run in a container named exactly `jenkins`, with its named home/workspace volume and `/var/run/docker.sock` mounted into it. All tool containers use `--volumes-from jenkins` and `--workdir "$WORKSPACE"`, so the checked-out repository and Docker socket remain visible even when the workspace lives in a named volume. The SonarScanner and AWS CLI containers use host networking to reach SonarQube and EC2 instance metadata. Prefer an isolated agent: access to the Docker socket is effectively privileged and untrusted pull-request code must not share this privileged host. The pipeline uses pinned Gitleaks, Trivy, SonarScanner CLI, Python, and AWS CLI images; versions are declared at the top of the Jenkinsfile.
+
+Install these Jenkins plugins:
+
+* Pipeline (Declarative Pipeline and Pipeline: Basic Steps)
+* Git plugin
+* Credentials Binding
+* SonarQube Scanner for Jenkins (`sonar`)
+* JUnit
+
+Configure **Manage Jenkins → System → SonarQube installations** with an installation named exactly `sonarqube`. Store its analysis token as a Jenkins **Secret text** credential with ID `sonarqube-token` (or update `SONAR_TOKEN_CREDENTIAL_ID` in the Jenkinsfile). Do not put the token in repository files, job parameters, or command-line literals. The Sonar scanner receives the token through a masked Jenkins credential environment binding. The containerized scanner uses host networking; configure the SonarQube URL to be reachable both from the Jenkins container and from host networking (for example, the EC2 private address and SonarQube port 9000). The Jenkins SonarQube installation name is what `withSonarQubeEnv` uses to attach the analysis task for `waitForQualityGate`.
+
+Create the SonarQube project with key `apexforge-cloudops-portal`, or change `sonar.projectKey` in `sonar-project.properties` to match the project. Add a SonarQube webhook to `https://<jenkins-host>/sonarqube-webhook/`; this is required by Jenkins `waitForQualityGate`. Ensure Jenkins agents can reach the configured SonarQube URL. `sonar-project.properties` identifies the Python source and test paths and imports pytest's JUnit report.
+
+The ECR push stage runs only for the `main` branch and uses the EC2 instance profile through the AWS CLI v2 default credential chain; it contains no AWS keys. The AWS CLI container uses host networking to reach EC2 instance metadata and verifies the caller account and role before pushing. Docker's ECR login config is temporary and removed after the stage. The existing repository must already exist at `489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal`. Grant `DevSecOpsToolsRole` `ecr:GetAuthorizationToken` on `*` and `ecr:BatchCheckLayerAvailability`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, and `ecr:PutImage` scoped to that repository ARN. The pipeline does not create the repository or change AWS infrastructure.
+
+The Terraform/CloudFormation stage currently finds no AWS infrastructure definitions in this repository; it runs Trivy config only when such files are added. The production approval/deployment stage is a non-blocking placeholder. No production deployment is performed. Configure the Jenkins job as a multibranch pipeline so the `main` branch condition is evaluated as intended.
+
+`.gitignore` and `.dockerignore` exclude `.runtime.env`, non-example `.env` files, AWS credential files, private keys, Terraform state, local scan caches, and generated reports. Keep runtime credentials outside the build context and repository.
 
 Probe examples (PowerShell):
 
