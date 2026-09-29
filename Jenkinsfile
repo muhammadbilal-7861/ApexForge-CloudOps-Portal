@@ -125,6 +125,8 @@ pipeline {
                     )]) {
                         sh '''#!/bin/sh
                             set -eu
+                            mkdir -p "$WORKSPACE/.scannerwork"
+                            chmod 700 "$WORKSPACE/.scannerwork"
                             docker run --rm \
                                 --network host \
                                 --volumes-from jenkins \
@@ -133,7 +135,8 @@ pipeline {
                                 --env SONAR_HOST_URL \
                                 --env SONAR_TOKEN \
                                 --env SONAR_USER_HOME=/tmp/.sonar \
-                                "$SONAR_SCANNER_IMAGE"
+                                "$SONAR_SCANNER_IMAGE" \
+                                "-Dsonar.working.directory=$WORKSPACE/.scannerwork"
                         '''
                     }
                 }
