@@ -25,6 +25,7 @@ pipeline {
         PYTHON_IMAGE = 'python:3.12-slim'
         GITLEAKS_IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.29.1'
         TRIVY_IMAGE = 'ghcr.io/aquasecurity/trivy:0.74.0'
+        TRIVY_CACHE_VOLUME = 'apexforge-trivy-cache'
         SONAR_SCANNER_IMAGE = 'sonarsource/sonar-scanner-cli:12.1.0.3233_8.0.1'
         SONARQUBE_SERVER = 'sonarqube'
         SONAR_TOKEN_CREDENTIAL_ID = 'sonarqube-token'
@@ -58,7 +59,8 @@ pipeline {
                 }
                 sh '''#!/bin/sh
                     set -eu
-                    mkdir -p reports .pip-cache .trivy-cache
+                    mkdir -p reports .pip-cache
+                    docker volume create "$TRIVY_CACHE_VOLUME" >/dev/null
                     printf '%s\n' '--- ApexForge CloudOps CI build ---'
                     printf 'Job: %s\nBuild: %s\nBranch: %s\nCommit: %s\nAgent: %s\n' \
                         "$JOB_NAME" "$BUILD_NUMBER" "${BRANCH_NAME:-unknown}" "$GIT_COMMIT_SHORT" "$(uname -a)"
@@ -157,22 +159,24 @@ pipeline {
                     set -eu
                     docker run --rm \
                         --volumes-from jenkins \
+                        --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
                         --workdir "$WORKSPACE" \
-                        --env TRIVY_CACHE_DIR="$WORKSPACE/.trivy-cache" \
+                        --env TRIVY_CACHE_DIR=/trivy-cache \
                         "$TRIVY_IMAGE" fs \
                         --scanners vuln,misconfig \
-                        --skip-dirs .git,.ci-venv,.pip-cache,.trivy-cache,.sonar,.scannerwork,reports,.pytest_cache,__pycache__,.venv,venv \
+                        --skip-dirs .git,.ci-venv,.pip-cache,.sonar,.scannerwork,reports,.pytest_cache,__pycache__,.venv,venv \
                         --severity "$TRIVY_SEVERITY" \
                         --exit-code 0 \
                         --format table \
                         .
                     docker run --rm \
                         --volumes-from jenkins \
+                        --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
                         --workdir "$WORKSPACE" \
-                        --env TRIVY_CACHE_DIR="$WORKSPACE/.trivy-cache" \
+                        --env TRIVY_CACHE_DIR=/trivy-cache \
                         "$TRIVY_IMAGE" fs \
                         --scanners vuln,misconfig \
-                        --skip-dirs .git,.ci-venv,.pip-cache,.trivy-cache,.sonar,.scannerwork,reports,.pytest_cache,__pycache__,.venv,venv \
+                        --skip-dirs .git,.ci-venv,.pip-cache,.sonar,.scannerwork,reports,.pytest_cache,__pycache__,.venv,venv \
                         --severity "$TRIVY_SEVERITY" \
                         --exit-code "$TRIVY_EXIT_CODE" \
                         --format json \
@@ -200,8 +204,9 @@ pipeline {
                             set -eu
                             docker run --rm \
                                 --volumes-from jenkins \
+                                --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
                                 --workdir "$WORKSPACE" \
-                                --env TRIVY_CACHE_DIR="$WORKSPACE/.trivy-cache" \
+                                --env TRIVY_CACHE_DIR=/trivy-cache \
                                 "$TRIVY_IMAGE" config \
                                 --scanners misconfig \
                                 --severity "$TRIVY_SEVERITY" \
@@ -232,8 +237,9 @@ pipeline {
                     set -eu
                     docker run --rm \
                         --volumes-from jenkins \
+                        --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
                         --workdir "$WORKSPACE" \
-                        --env TRIVY_CACHE_DIR="$WORKSPACE/.trivy-cache" \
+                        --env TRIVY_CACHE_DIR=/trivy-cache \
                         "$TRIVY_IMAGE" image \
                         --image-src docker \
                         --scanners vuln \
@@ -243,8 +249,9 @@ pipeline {
                         "$APP_IMAGE_REF"
                     docker run --rm \
                         --volumes-from jenkins \
+                        --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
                         --workdir "$WORKSPACE" \
-                        --env TRIVY_CACHE_DIR="$WORKSPACE/.trivy-cache" \
+                        --env TRIVY_CACHE_DIR=/trivy-cache \
                         "$TRIVY_IMAGE" image \
                         --image-src docker \
                         --scanners vuln \
