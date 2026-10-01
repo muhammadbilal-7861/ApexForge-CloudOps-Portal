@@ -157,6 +157,7 @@ pipeline {
             steps {
                 sh '''#!/bin/sh
                     set -eu
+                    # Reporting scans include fixed and unfixed vulnerabilities; they never gate on findings.
                     docker run --rm \
                         --volumes-from jenkins \
                         --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
@@ -178,9 +179,38 @@ pipeline {
                         --scanners vuln,misconfig \
                         --skip-dirs .git,.ci-venv,.pip-cache,.sonar,.scannerwork,reports,.pytest_cache,__pycache__,.venv,venv \
                         --severity "$TRIVY_SEVERITY" \
-                        --exit-code "$TRIVY_EXIT_CODE" \
+                        --exit-code 0 \
                         --format json \
                         --output "$WORKSPACE/reports/trivy-filesystem.json" \
+                        .
+
+                    # Enforce only fixable HIGH/CRITICAL package vulnerabilities; unfixed findings remain in the reports and require documented risk review.
+                    docker run --rm \
+                        --volumes-from jenkins \
+                        --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
+                        --workdir "$WORKSPACE" \
+                        --env TRIVY_CACHE_DIR=/trivy-cache \
+                        "$TRIVY_IMAGE" fs \
+                        --scanners vuln \
+                        --skip-dirs .git,.ci-venv,.pip-cache,.sonar,.scannerwork,reports,.pytest_cache,__pycache__,.venv,venv \
+                        --ignore-unfixed \
+                        --severity "$TRIVY_SEVERITY" \
+                        --exit-code "$TRIVY_EXIT_CODE" \
+                        --format table \
+                        .
+
+                    # Misconfiguration findings are gated separately; ignore-unfixed does not apply to IaC/config checks.
+                    docker run --rm \
+                        --volumes-from jenkins \
+                        --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
+                        --workdir "$WORKSPACE" \
+                        --env TRIVY_CACHE_DIR=/trivy-cache \
+                        "$TRIVY_IMAGE" fs \
+                        --scanners misconfig \
+                        --skip-dirs .git,.ci-venv,.pip-cache,.sonar,.scannerwork,reports,.pytest_cache,__pycache__,.venv,venv \
+                        --severity "$TRIVY_SEVERITY" \
+                        --exit-code "$TRIVY_EXIT_CODE" \
+                        --format table \
                         .
                 '''
             }
@@ -235,6 +265,7 @@ pipeline {
             steps {
                 sh '''#!/bin/sh
                     set -eu
+                    # Complete reporting includes fixable and unfixed HIGH/CRITICAL findings.
                     docker run --rm \
                         --volumes-from jenkins \
                         --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
@@ -256,9 +287,24 @@ pipeline {
                         --image-src docker \
                         --scanners vuln \
                         --severity "$TRIVY_SEVERITY" \
-                        --exit-code "$TRIVY_EXIT_CODE" \
+                        --exit-code 0 \
                         --format json \
                         --output "$WORKSPACE/reports/trivy-image.json" \
+                        "$APP_IMAGE_REF"
+
+                    # Release gate: fail for fixable HIGH/CRITICAL vulnerabilities. Unfixed findings stay in the complete reports and require documented risk review, not silent suppression.
+                    docker run --rm \
+                        --volumes-from jenkins \
+                        --mount "type=volume,source=$TRIVY_CACHE_VOLUME,target=/trivy-cache" \
+                        --workdir "$WORKSPACE" \
+                        --env TRIVY_CACHE_DIR=/trivy-cache \
+                        "$TRIVY_IMAGE" image \
+                        --image-src docker \
+                        --scanners vuln \
+                        --severity "$TRIVY_SEVERITY" \
+                        --ignore-unfixed \
+                        --exit-code "$TRIVY_EXIT_CODE" \
+                        --format table \
                         "$APP_IMAGE_REF"
                 '''
             }
