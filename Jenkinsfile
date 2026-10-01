@@ -56,6 +56,35 @@ pipeline {
                         returnStdout: true
                     ).trim()
                     env.APP_IMAGE_REF = "${env.APP_IMAGE_NAME}:${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
+
+                    def scmBranch = ""
+                    if (env.GIT_BRANCH != null) {
+                        scmBranch = env.GIT_BRANCH.trim()
+                    }
+                    scmBranch = scmBranch.replaceFirst('^refs/remotes/', "").replaceFirst('^remotes/', "").replaceFirst('^refs/heads/', "").replaceFirst('^origin/', "")
+
+                    if (!scmBranch || scmBranch == 'HEAD') {
+                        def containingBranches = sh(
+                            script: "git for-each-ref --contains HEAD --format='%(refname:short)' refs/remotes/origin | sed 's#^origin/##' | grep -v '^HEAD$' | sort -u || true",
+                            returnStdout: true
+                        ).trim().readLines().findAll { it }
+                        def exactBranches = sh(
+                            script: "git for-each-ref --points-at HEAD --format='%(refname:short)' refs/remotes/origin | sed 's#^origin/##' | grep -v '^HEAD$' | sort -u || true",
+                            returnStdout: true
+                        ).trim().readLines().findAll { it }
+
+                        if (exactBranches.size() == 1) {
+                            scmBranch = exactBranches[0]
+                        } else if (containingBranches.size() == 1) {
+                            scmBranch = containingBranches[0]
+                        } else {
+                            scmBranch = 'unknown'
+                        }
+                    }
+                    if (!scmBranch) {
+                        scmBranch = 'unknown'
+                    }
+                    env.SCM_BRANCH = scmBranch
                 }
                 sh '''#!/bin/sh
                     set -eu
@@ -63,7 +92,7 @@ pipeline {
                     docker volume create "$TRIVY_CACHE_VOLUME" >/dev/null
                     printf '%s\n' '--- ApexForge CloudOps CI build ---'
                     printf 'Job: %s\nBuild: %s\nBranch: %s\nCommit: %s\nAgent: %s\n' \
-                        "$JOB_NAME" "$BUILD_NUMBER" "${BRANCH_NAME:-unknown}" "$GIT_COMMIT_SHORT" "$(uname -a)"
+                        "$JOB_NAME" "$BUILD_NUMBER" "$SCM_BRANCH" "$GIT_COMMIT_SHORT" "$(uname -a)"
                     printf 'Image: %s\nTrivy severities: %s (exit code %s)\n' \
                         "$APP_IMAGE_REF" "$TRIVY_SEVERITY" "$TRIVY_EXIT_CODE"
                     printf 'Health endpoints: /health (liveness), /ready (database readiness), /metrics\n'
@@ -322,7 +351,7 @@ pipeline {
 
         stage('Push image to Amazon ECR') {
             when {
-                branch 'main'
+                expression { env.SCM_BRANCH == 'main' }
             }
             steps {
                 sh '''#!/bin/bash
@@ -355,6 +384,18 @@ pipeline {
 
                     aws_cli ecr get-login-password --region "$AWS_REGION" |
                         docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+                    if ! git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}' >/dev/null; then
+                        echo 'Refusing ECR push: origin/main is not available in the checked-out repository.' >&2
+                        exit 1
+                    fi
+                    head_sha="$(git rev-parse HEAD)"
+                    main_sha="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
+                    if [ "$head_sha" != "$main_sha" ]; then
+                        echo 'Refusing ECR push: checked-out HEAD does not match origin/main.' >&2
+                        exit 1
+                    fi
+
                     printf 'Publishing %s from build %s\n' "$ECR_REPOSITORY" "$BUILD_NUMBER"
                     docker tag "$APP_IMAGE_REF" "$ECR_URI:$GIT_COMMIT_SHORT"
                     docker push "$ECR_URI:$GIT_COMMIT_SHORT"
