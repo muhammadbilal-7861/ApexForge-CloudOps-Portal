@@ -65,11 +65,11 @@ pipeline {
 
                     if (!scmBranch || scmBranch == 'HEAD') {
                         def containingBranches = sh(
-                            script: "git for-each-ref --contains HEAD --format='%(refname:short)' refs/remotes/origin | sed 's#^origin/##' | grep -v '^HEAD$' | sort -u || true",
+                            script: "git for-each-ref --contains HEAD --format='%(refname:short)' refs/remotes/origin | sed 's#^origin/##' | grep -v '^HEAD\$' | sort -u || true",
                             returnStdout: true
                         ).trim().readLines().findAll { it }
                         def exactBranches = sh(
-                            script: "git for-each-ref --points-at HEAD --format='%(refname:short)' refs/remotes/origin | sed 's#^origin/##' | grep -v '^HEAD$' | sort -u || true",
+                            script: "git for-each-ref --points-at HEAD --format='%(refname:short)' refs/remotes/origin | sed 's#^origin/##' | grep -v '^HEAD\$' | sort -u || true",
                             returnStdout: true
                         ).trim().readLines().findAll { it }
 
