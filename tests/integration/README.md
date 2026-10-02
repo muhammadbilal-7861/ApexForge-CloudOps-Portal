@@ -1,0 +1,9 @@
+# Disposable canary rehearsal
+
+Run `python3 tests/integration/rehearse_canary.py` from WSL/Linux with Docker available. Cache `docker:29-dind`, `registry:2`, and a local application image built as `apexforge-cloudops:cd-check` first (`docker build -t apexforge-cloudops:cd-check .`). This is an explicit, privileged integration check; ordinary pytest does not start it.
+
+The script creates one uniquely labeled disposable Docker daemon with private storage and networking. Its registry uses the configured ECR hostname mapped to loopback inside that daemon. AWS commands are replaced with fixture responses; no AWS credentials, production registry, SSM instance, or ALB is accessed. No Docker socket from the host is mounted into it. Cleanup verifies ownership and removes only the outer rehearsal container; it never prunes host images or deletes host volumes.
+
+Inside the private daemon, the unmodified deployment and verification scripts run against real Docker containers and HTTP endpoints. A small Gunicorn fixture replaces the business application so readiness failures can be injected without database dependencies. Four scenarios cover successful cutover, failed candidate readiness, failed production readiness, and failed ALB verification. The checks compare the retained container's full ID, Docker configuration, network configuration, and volume mounts, verify a preserved volume marker after rollback, and check HTTP health/readiness recovery. The original container has bridge networking and a wildcard port-5000 publication; the candidate and production containers use host networking.
+
+Evidence is written to ignored `reports/canary-docker-rehearsal/`: per-scenario deployment logs, a JSON result manifest, and daemon logs. This validates Docker lifecycle and script behavior. Live AWS IAM, ALB routing, RDS, and the production application's business behavior require their own environment checks.

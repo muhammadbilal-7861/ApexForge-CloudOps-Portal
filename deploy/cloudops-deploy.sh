@@ -13,6 +13,23 @@ readonly VERIFY_SCRIPT="${CLOUDOPS_VERIFY_SCRIPT:-/usr/local/sbin/cloudops-verif
 log() { printf '[cloudops-deploy] %s\n' "$*"; }
 fail() { printf '[cloudops-deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 container_exists() { docker inspect "$1" >/dev/null 2>&1; }
+canonical_container_id() {
+    local id
+    id="$(docker inspect --format '{{.Id}}' "$1")" || return 1
+    [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 1
+    printf '%s\n' "$id"
+}
+
+# Resolve the name again and compare the immutable ID and original configuration.
+previous_matches_inventory() {
+    local expected_name="$1" resolved
+    resolved="$(canonical_container_id "$expected_name")" || return 1
+    [[ "$resolved" == "$previous_id" ]] || return 1
+    [[ "$(docker inspect --format '{{.Name}}' "$previous_id")" == "/$expected_name" ]] || return 1
+    [[ "$(docker inspect --format '{{.Config.Image}}' "$previous_id")" == "$previous_image" ]] || return 1
+    [[ "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$previous_id")" == "$previous_network" ]] || return 1
+    [[ "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$previous_id")" == "$previous_port_bindings" ]]
+}
 
 validate_legacy_network() {
     local network="$1" bindings="$2" container_id="$3" published_ports active_ports
@@ -193,7 +210,7 @@ previous_kind="none"
 if container_exists "$CONTAINER_NAME"; then
     service_label="$(docker inspect --format '{{index .Config.Labels "service"}}' "$CONTAINER_NAME")"
     [[ "$service_label" == cloudops ]] || fail "container name $CONTAINER_NAME is occupied by an unrecognized workload; it was not changed."
-    previous_id="$(docker inspect --format '{{.Id}}' "$CONTAINER_NAME")"
+    previous_id="$(canonical_container_id "$CONTAINER_NAME")" || fail 'could not resolve the managed container canonical ID.'
     previous_name="$CONTAINER_NAME"
     previous_image="$(docker inspect --format '{{.Config.Image}}' "$previous_id")"
     previous_version="$(docker inspect --format '{{index .Config.Labels "org.apexforge.version"}}' "$previous_id")"
@@ -205,11 +222,13 @@ if container_exists "$CONTAINER_NAME"; then
     docker inspect --format 'inventoried prior managed container name={{.Name}} image={{.Config.Image}} mounts={{json .Mounts}}' "$previous_id"
     previous_kind=managed
 else
-    mapfile -t legacy_ids < <(docker ps --quiet --filter "ancestor=$LEGACY_IMAGE" --filter status=running)
+    legacy_listing="$(docker ps --quiet --no-trunc --filter "ancestor=$LEGACY_IMAGE" --filter status=running)" || fail 'legacy container discovery failed; refusing cutover.'
+    legacy_ids=()
+    if [[ -n "$legacy_listing" ]]; then mapfile -t legacy_ids <<< "$legacy_listing"; fi
     if ((${#legacy_ids[@]} > 1)); then
         fail "multiple running containers use $LEGACY_IMAGE; refusing to guess which one serves port 5000."
     elif ((${#legacy_ids[@]} == 1)); then
-        previous_id="${legacy_ids[0]}"
+        previous_id="$(canonical_container_id "${legacy_ids[0]}")" || fail 'could not resolve the legacy container canonical ID.'
         previous_name="$(docker inspect --format '{{.Name}}' "$previous_id")"
         previous_name="${previous_name#/}"
         previous_image="$(docker inspect --format '{{.Config.Image}}' "$previous_id")"
@@ -241,12 +260,13 @@ elif [[ "$previous_kind" == managed ]]; then
         --container-name "$CONTAINER_NAME" --port 5000 --require-container-health --wait-seconds 0
 fi
 
-python3 -c 'import socket,sys; s=socket.socket();
+python3 -c 'import socket,sys; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);
 try: s.bind(("0.0.0.0",int(sys.argv[1])))
 except OSError: sys.exit(1)
 finally: s.close()' 5001 || fail 'localhost port 5001 is already in use; candidate was not started and the existing app was left untouched.'
 
 candidate_name="cloudops-candidate-${app_version:0:12}"
+deployment_id="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
 candidate_retained="cloudops-verified-${app_version:0:12}-$(date -u +%Y%m%d%H%M%S)-$$"
 failed_candidate="cloudops-failed-candidate-${app_version:0:12}-$(date -u +%Y%m%d%H%M%S)-$$"
 for name in "$candidate_name" "$candidate_retained" "$failed_candidate"; do
@@ -271,6 +291,7 @@ candidate_id="$(docker run --detach \
     --network host \
     --restart unless-stopped \
     --label service=cloudops-candidate \
+    --label "org.apexforge.deployment=$deployment_id" \
     --label "org.apexforge.version=$app_version" \
     --env-file "$RUNTIME_ENV" \
     --env "APP_VERSION=$app_version" \
@@ -282,6 +303,7 @@ candidate_id="$(docker run --detach \
         fail 'candidate container could not start on port 5001; the existing port-5000 container remains untouched.'
     }
 
+candidate_id="$(canonical_container_id "$candidate_id")" || fail 'could not resolve the new candidate canonical ID; refusing cutover.'
 if ! "$VERIFY_SCRIPT" --expected-image "$image_uri" --expected-version "$app_version" \
     --container-name "$candidate_name" --port 5001 --require-container-health \
     --wait-seconds "${CLOUDOPS_CANDIDATE_WAIT_SECONDS:-180}"; then
@@ -310,15 +332,16 @@ production_id=""
 previous_moved=false
 
 restore_previous() {
-    local current_id current_label current_image restored=false
+    local current_id current_label current_image current_deployment restored=false
     set +e
     if container_exists "$CONTAINER_NAME"; then
-        current_id="$(docker inspect --format '{{.Id}}' "$CONTAINER_NAME")"
+        current_id="$(canonical_container_id "$CONTAINER_NAME")"
         current_label="$(docker inspect --format '{{index .Config.Labels "service"}}' "$current_id")"
         current_image="$(docker inspect --format '{{.Config.Image}}' "$current_id")"
+        current_deployment="$(docker inspect --format '{{index .Config.Labels "org.apexforge.deployment"}}' "$current_id")"
         if [[ "$current_id" == "$previous_id" && "$previous_name" == "$CONTAINER_NAME" ]]; then
             log 'The original managed container still owns cloudops-app; preserving it and restoring its running state if needed.'
-        elif [[ -n "$production_id" && "$current_id" == "$production_id" && "$current_label" == cloudops && "$current_image" == "$image_uri" ]]; then
+        elif [[ -n "$production_id" && "$current_id" == "$production_id" && "$current_label" == cloudops && "$current_image" == "$image_uri" && "$current_deployment" == "$deployment_id" ]]; then
             docker inspect --format 'failed production candidate name={{.Name}} image={{.Config.Image}} mounts={{json .Mounts}}' "$current_id"
             docker stop --time 10 "$current_id" >/dev/null
             docker rename "$current_id" "cloudops-failed-${app_version:0:12}-$(date -u +%Y%m%d%H%M%S)-$$"
@@ -333,16 +356,18 @@ restore_previous() {
         actual_name="$(docker inspect --format '{{.Name}}' "$previous_id")"
         actual_name="${actual_name#/}"
         if [[ "$actual_name" == "$rollback_name" || "$actual_name" == "$previous_name" ]]; then
+            if ! previous_matches_inventory "$actual_name"; then
+                log 'CRITICAL: original container identity or configuration changed; refusing rollback mutation.' >&2
+                set -e
+                return 1
+            fi
             if [[ "$actual_name" == "$rollback_name" ]]; then
                 docker rename "$previous_id" "$previous_name"
             fi
             if [[ "$(docker inspect --format '{{.State.Running}}' "$previous_id")" != true ]]; then
                 docker start "$previous_id" >/dev/null
             fi
-            if [[ "$(docker inspect --format '{{.State.Running}}' "$previous_id")" != true \
-                || "$(docker inspect --format '{{.Config.Image}}' "$previous_id")" != "$previous_image" \
-                || "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$previous_id")" != "$previous_network" \
-                || "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$previous_id")" != "$previous_port_bindings" ]]; then
+            if ! previous_matches_inventory "$previous_name" || [[ "$(docker inspect --format '{{.State.Running}}' "$previous_id")" != true ]]; then
                 log 'CRITICAL: prior container identity or running state did not recover after rollback.' >&2
                 set -e
                 return 1
@@ -358,10 +383,18 @@ restore_previous() {
         fi
     fi
     if [[ "$restored" == true ]]; then
-        local old_health old_ready
-        old_health="$(curl --connect-timeout 3 --max-time 8 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:5000/health || true)"
-        old_ready="$(curl --connect-timeout 3 --max-time 8 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:5000/ready || true)"
-        if [[ "$old_health" == 200 && "$old_ready" == 200 ]]; then
+        local old_health old_ready recovery_deadline=$((SECONDS + ${CLOUDOPS_RESTORE_WAIT_SECONDS:-180}))
+        # docker start returns before Gunicorn necessarily listens. Bound recovery polling
+        # instead of declaring rollback unsuccessful on the first connection refusal.
+        while :; do
+            old_health="$(curl --connect-timeout 3 --max-time 8 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:5000/health || true)"
+            old_ready="$(curl --connect-timeout 3 --max-time 8 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:5000/ready || true)"
+            [[ "$old_health" == 200 && "$old_ready" == 200 ]] && break
+            ((SECONDS >= recovery_deadline)) && break
+            sleep 2
+        done
+        if [[ "$old_health" == 200 && "$old_ready" == 200 ]] && previous_matches_inventory "$previous_name" \
+            && [[ "$(docker inspect --format '{{.State.Running}}' "$previous_id")" == true ]]; then
             if [[ -n "$target_group_arn" ]]; then
                 local target_deadline=$((SECONDS + 300)) restored_target=unknown
                 while ((SECONDS < target_deadline)); do
@@ -390,8 +423,11 @@ restore_previous() {
 }
 
 if [[ -n "$previous_id" ]]; then
-    actual_id="$(docker inspect --format '{{.Id}}' "$previous_name")"
-    [[ "$actual_id" == "$previous_id" ]] || fail 'prior container identity changed after candidate verification; refusing cutover.'
+    previous_matches_inventory "$previous_name" || fail 'prior container identity or configuration changed after candidate verification; refusing cutover.'
+    [[ "$(docker inspect --format '{{.State.Running}}' "$previous_id")" == true ]] || fail 'prior container stopped after candidate verification; refusing cutover.'
+    if [[ "$previous_kind" == legacy ]]; then
+        validate_legacy_network "$previous_network" "$previous_port_bindings" "$previous_id" || fail 'prior port publications changed after candidate verification; refusing cutover.'
+    fi
     docker stop --time 20 "$previous_id" >/dev/null || { restore_previous || true; fail 'could not stop the exact inventoried prior container.'; }
     if ! docker rename "$previous_id" "$rollback_name"; then
         restore_previous || true
@@ -406,6 +442,7 @@ if ! production_id="$(docker run --detach \
     --network host \
     --restart unless-stopped \
     --label service=cloudops \
+    --label "org.apexforge.deployment=$deployment_id" \
     --label "org.apexforge.version=$app_version" \
     --env-file "$RUNTIME_ENV" \
     --env "APP_VERSION=$app_version" \
@@ -413,14 +450,16 @@ if ! production_id="$(docker run --detach \
     if container_exists "$CONTAINER_NAME"; then
         failed_image="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER_NAME")"
         failed_service="$(docker inspect --format '{{index .Config.Labels "service"}}' "$CONTAINER_NAME")"
-        if [[ "$failed_image" == "$image_uri" && "$failed_service" == cloudops ]]; then
-            production_id="$(docker inspect --format '{{.Id}}' "$CONTAINER_NAME")"
+        failed_deployment="$(docker inspect --format '{{index .Config.Labels "org.apexforge.deployment"}}' "$CONTAINER_NAME")"
+        if [[ "$failed_image" == "$image_uri" && "$failed_service" == cloudops && "$failed_deployment" == "$deployment_id" ]]; then
+            production_id="$(canonical_container_id "$CONTAINER_NAME")"
         fi
     fi
     restore_previous || true
     fail 'production container could not start on port 5000; rollback was attempted and prior container/image were retained.'
 fi
 
+production_id="$(canonical_container_id "$production_id")" || { restore_previous || true; fail 'could not resolve the new production canonical ID.'; }
 verify_args=(
     --expected-image "$image_uri"
     --expected-version "$app_version"
