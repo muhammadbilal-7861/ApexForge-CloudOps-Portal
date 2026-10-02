@@ -368,6 +368,7 @@ def fmt(t,c):
     if t=="{{.Config.Image}}": return c["image"]
     if t=="{{.State.Running}}": return str(c["running"]).lower()
     if t=="{{.HostConfig.NetworkMode}}": return c["network"]
+    if t=="{{json .HostConfig.PortBindings}}": return json.dumps(c.get("port_bindings"))
     if t=="{{.Name}}": return "/"+c["name"]
     if t=="{{json .Mounts}}": return json.dumps(c["mounts"])
     if t=='{{index .Config.Labels "service"}}': return c["labels"].get("service","<no value>")
@@ -383,6 +384,11 @@ elif a[0]=="inspect":
     target=a[-1]; c=get(target)
     if c is None: sys.exit(1)
     if "--format" in a: print(fmt(a[a.index("--format")+1],c))
+elif a[0]=="port":
+    c=get(a[1]); bindings=c.get("port_bindings") or {}
+    for entry in bindings.get("5000/tcp",[]):
+        host=entry.get("HostIp") or "0.0.0.0"
+        print(f'{host}:{entry["HostPort"]}')
 elif a[0]=="pull": sys.exit(1) if os.getenv("TEST_ECR_PULL_FAIL")=="true" else None
 elif a[0]=="login": sys.stdin.read()
 elif a[0]=="run":
@@ -393,7 +399,7 @@ elif a[0]=="run":
             k,v=a[i+1].split("=",1); labels[k]=v
     state["next"]+=1; ident=f'new-{state["next"]}'
     candidate="candidate" in name
-    c={"id":ident,"name":name,"image":image,"running":True,"network":"host","labels":labels,"health":os.getenv("TEST_CANDIDATE_DOCKER_HEALTH" if candidate else "TEST_PRODUCTION_DOCKER_HEALTH","healthy"),"mounts":[]}
+    c={"id":ident,"name":name,"image":image,"running":True,"network":"host","port_bindings":None,"labels":labels,"health":os.getenv("TEST_CANDIDATE_DOCKER_HEALTH" if candidate else "TEST_PRODUCTION_DOCKER_HEALTH","healthy"),"mounts":[]}
     cs[ident]=c; save(); print(ident)
 elif a[0]=="stop":
     c=get(a[-1]); c["running"]=False; save(); print(c["name"])
@@ -425,7 +431,7 @@ prod=next((c for c in cs if c["running"] and c["name"]=="cloudops-app"),None)
 legacy=any(c["running"] and c["image"]=="cloudops-flask:1.1" for c in cs)
 if u.port==5001:
     key="TEST_CANDIDATE_"+("READY" if u.path=="/ready" else "HTTP")
-    status=os.getenv(key,"200") if candidate else "000"
+    status=os.getenv(key,"200") if candidate and (legacy or prod) else "000"
 else:
     key="TEST_PRODUCTION_"+("READY" if u.path=="/ready" else "HTTP")
     status=os.getenv(key,"200") if prod else ("200" if legacy else "000")
@@ -473,6 +479,16 @@ def run_fake_deploy(host: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def configure_legacy_bridge(host: dict[str, str], port_bindings: dict[str, list[dict[str, str]]] | None = None) -> None:
+    state_path = Path(host["state"])
+    state = json.loads(state_path.read_text())
+    state["containers"]["legacy-1"]["network"] = "bridge"
+    state["containers"]["legacy-1"]["port_bindings"] = port_bindings or {
+        "5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}],
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+
 def test_canary_port_conflict_refuses_candidate_before_mutating_legacy(fake_canary_host: dict[str, str]) -> None:
     listener = socket.socket()
     listener.bind(("0.0.0.0", 5001))
@@ -501,6 +517,111 @@ def test_successful_canary_candidate_cutover_retains_previous_container(fake_can
     assert previous["name"].startswith("cloudops-rollback-")
     assert previous["image"] == "cloudops-flask:1.1"
     assert candidate["running"] is False
+
+
+def test_successful_bridge_legacy_canary_cutover_preserves_original_container_configuration(
+    fake_canary_host: dict[str, str],
+) -> None:
+    configure_legacy_bridge(fake_canary_host)
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode == 0, result.stdout + result.stderr
+    state = json.loads(Path(fake_canary_host["state"]).read_text())
+    previous = state["containers"]["legacy-1"]
+    production = next(item for item in state["containers"].values() if item["name"] == "cloudops-app")
+    candidate = next(item for item in state["containers"].values() if item["name"].startswith("cloudops-verified-"))
+    assert previous["running"] is False
+    assert previous["network"] == "bridge"
+    assert previous["port_bindings"] == {"5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}]}
+    assert previous["name"].startswith("cloudops-rollback-")
+    assert production["running"] is True
+    assert production["network"] == "host"
+    assert candidate["running"] is False
+
+
+def test_bridge_legacy_candidate_failure_leaves_original_serving_port_5000(
+    fake_canary_host: dict[str, str],
+) -> None:
+    configure_legacy_bridge(fake_canary_host)
+    fake_canary_host["env"]["TEST_CANDIDATE_DOCKER_HEALTH"] = "unhealthy"
+    fake_canary_host["env"]["TEST_CANDIDATE_HTTP"] = "503"
+    fake_canary_host["env"]["TEST_CANDIDATE_READY"] = "503"
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    state = json.loads(Path(fake_canary_host["state"]).read_text())
+    previous = state["containers"]["legacy-1"]
+    assert previous["running"] is True
+    assert previous["name"] == "cloudops-flask"
+    assert previous["network"] == "bridge"
+    assert previous["port_bindings"] == {"5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}]}
+    assert not any(item["name"] == "cloudops-app" for item in state["containers"].values())
+
+
+def test_bridge_legacy_production_failure_restarts_original_publication(
+    fake_canary_host: dict[str, str],
+) -> None:
+    configure_legacy_bridge(fake_canary_host)
+    fake_canary_host["env"]["TEST_PRODUCTION_HTTP"] = "503"
+    fake_canary_host["env"]["TEST_PRODUCTION_READY"] = "503"
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "Previous container restored" in result.stdout
+    previous = json.loads(Path(fake_canary_host["state"]).read_text())["containers"]["legacy-1"]
+    assert previous["running"] is True
+    assert previous["name"] == "cloudops-flask"
+    assert previous["network"] == "bridge"
+    assert previous["port_bindings"] == {"5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}]}
+
+
+def test_bridge_legacy_alb_failure_restores_original_and_waits_for_target_health(
+    fake_canary_host: dict[str, str],
+) -> None:
+    configure_legacy_bridge(fake_canary_host)
+    fake_canary_host["env"]["TEST_ALB_HEALTHY"] = "false"
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "Previous container restored" in result.stdout
+    previous = json.loads(Path(fake_canary_host["state"]).read_text())["containers"]["legacy-1"]
+    assert previous["running"] is True
+    assert previous["name"] == "cloudops-flask"
+    assert previous["network"] == "bridge"
+    assert previous["port_bindings"] == {"5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}]}
+
+
+def test_legacy_bridge_unexpected_port_mapping_is_rejected_without_mutation(
+    fake_canary_host: dict[str, str],
+) -> None:
+    configure_legacy_bridge(fake_canary_host, {
+        "5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}],
+        "8080/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}],
+    })
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "network or published ports failed validation" in result.stdout
+    state = json.loads(Path(fake_canary_host["state"]).read_text())
+    previous = state["containers"]["legacy-1"]
+    assert previous["running"] is True
+    assert previous["name"] == "cloudops-flask"
+    assert previous["network"] == "bridge"
+    assert not any("candidate" in item["name"] for item in state["containers"].values())
+
+
+def test_ambiguous_running_legacy_images_are_rejected_before_candidate(fake_canary_host: dict[str, str]) -> None:
+    state_path = Path(fake_canary_host["state"])
+    state = json.loads(state_path.read_text())
+    state["containers"]["legacy-2"] = {
+        "id": "legacy-2", "name": "unexpected-legacy-copy", "image": "cloudops-flask:1.1",
+        "running": True, "network": "bridge", "port_bindings": {
+            "5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}],
+        }, "labels": {}, "health": "none", "mounts": [],
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "multiple running containers" in result.stdout
+    state = json.loads(state_path.read_text())
+    assert state["containers"]["legacy-1"]["running"] is True
+    assert state["containers"]["legacy-2"]["running"] is True
+    assert not any("candidate" in item["name"] for item in state["containers"].values())
 
 
 def test_successful_cutover_from_managed_previous_container(fake_canary_host: dict[str, str]) -> None:
