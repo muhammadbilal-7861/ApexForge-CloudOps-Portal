@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+set +x
+exec >> /var/log/cloudops-bootstrap.log 2>&1
+# The trap body is intentionally evaluated only when ERR fires.
+# shellcheck disable=SC2154
+trap 'status=$?; printf "cloudops bootstrap failed: exit=%s line=%s\n" "$status" "$LINENO"; exit "$status"' ERR
+umask 077
+
+readonly AWS_REGION="@@AWS_REGION@@"
+readonly IMAGE_URI="@@IMAGE_URI@@"
+readonly APP_VERSION="@@APP_VERSION@@"
+readonly SOURCE_COMMIT="@@SOURCE_COMMIT@@"
+readonly SESSION_SECRET_NAME="cloudops/prod/flask-session-key"
+readonly DB_SECRET_NAME="cloudops/prod/mariadb"
+readonly LOG_GROUP="/cloudops/app"
+readonly RAW_BASE="https://raw.githubusercontent.com/muhammadbilal-7861/ApexForge-CloudOps-Portal/${SOURCE_COMMIT}/deploy"
+readonly DEPLOY_SCRIPT_SHA256="@@DEPLOY_SCRIPT_SHA256@@"
+readonly VERIFY_SCRIPT_SHA256="@@VERIFY_SCRIPT_SHA256@@"
+
+[[ "$IMAGE_URI" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]
+[[ "$APP_VERSION" =~ ^[0-9a-f]{12,40}$ ]]
+[[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+if command -v dnf >/dev/null 2>&1; then
+    dnf install -y docker awscli curl python3 amazon-ssm-agent amazon-cloudwatch-agent
+elif command -v yum >/dev/null 2>&1; then
+    if command -v amazon-linux-extras >/dev/null 2>&1; then
+        amazon-linux-extras install -y docker
+    else
+        yum install -y docker
+    fi
+    yum install -y awscli curl python3 amazon-ssm-agent
+    cpu_arch="$(uname -m)"
+    case "$cpu_arch" in
+        x86_64) cw_arch=amd64 ;;
+        aarch64) cw_arch=arm64 ;;
+        *) printf 'Unsupported CloudWatch Agent architecture: %s\n' "$cpu_arch" >&2; exit 1 ;;
+    esac
+    curl --fail --silent --show-error --location "https://amazoncloudwatch-agent.s3.amazonaws.com/amazon_linux/${cw_arch}/latest/amazon-cloudwatch-agent.rpm" -o /tmp/amazon-cloudwatch-agent.rpm
+    yum install -y /tmp/amazon-cloudwatch-agent.rpm
+    rm -f /tmp/amazon-cloudwatch-agent.rpm
+elif command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends docker.io awscli curl python3 ca-certificates
+    dpkg_arch="$(dpkg --print-architecture)"
+    case "$dpkg_arch" in
+        amd64) ssm_arch=debian_amd64; cw_arch=amd64 ;;
+        arm64) ssm_arch=debian_arm64; cw_arch=arm64 ;;
+        *) printf 'Unsupported Debian architecture: %s\n' "$dpkg_arch" >&2; exit 1 ;;
+    esac
+    curl --fail --silent --show-error --location "https://s3.${AWS_REGION}.amazonaws.com/amazon-ssm-${AWS_REGION}/latest/${ssm_arch}/amazon-ssm-agent.deb" -o /tmp/amazon-ssm-agent.deb
+    dpkg -i /tmp/amazon-ssm-agent.deb
+    rm -f /tmp/amazon-ssm-agent.deb
+    curl --fail --silent --show-error --location "https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/${cw_arch}/latest/amazon-cloudwatch-agent.deb" -o /tmp/amazon-cloudwatch-agent.deb
+    dpkg -i /tmp/amazon-cloudwatch-agent.deb
+    rm -f /tmp/amazon-cloudwatch-agent.deb
+else
+    printf 'Unsupported Linux image: install Docker, AWS CLI v2-compatible ECR commands, SSM Agent, and CloudWatch Agent in a reviewed AMI.\n' >&2
+    exit 1
+fi
+
+systemctl enable --now docker
+systemctl enable --now amazon-ssm-agent
+
+install -d -o root -g root -m 0750 /etc/cloudops /usr/local/sbin
+aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$DB_SECRET_NAME" --query SecretString --output text |
+    python3 -c 'import json,sys; d=json.load(sys.stdin); assert isinstance(d.get("host"),str) and isinstance(d.get("username"),str) and isinstance(d.get("password"),str) and isinstance(d.get("dbname",d.get("database")),str) and 0 < int(d.get("port",3306)) < 65536; print("Database secret schema validated.")'
+if [[ ! -e /etc/cloudops/runtime.env ]]; then
+    session_secret="$(aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$SESSION_SECRET_NAME" --query SecretString --output text)"
+    if [[ -z "$session_secret" || "$session_secret" == *$'\n'* || "$session_secret" == *$'\r'* || ${#session_secret} -lt 32 ]]; then
+        printf 'Session signing secret is missing, multiline, or too short.\n' >&2
+        exit 1
+    fi
+    runtime_tmp="$(mktemp /etc/cloudops/runtime.env.XXXXXX)"
+    chmod 0600 "$runtime_tmp"
+    {
+        printf 'FLASK_ENV=production\n'
+        printf 'SECRET_KEY=%s\n' "$session_secret"
+        printf 'SESSION_COOKIE_SECURE=false\n'
+        printf 'USE_AWS_SECRETS=true\n'
+        printf 'AWS_SECRET_NAME=%s\n' "$DB_SECRET_NAME"
+        printf 'AWS_REGION=%s\n' "$AWS_REGION"
+        printf 'ENABLE_LAB_FAILURE_ENDPOINTS=false\n'
+    } > "$runtime_tmp"
+    chown root:root "$runtime_tmp"
+    mv -f "$runtime_tmp" /etc/cloudops/runtime.env
+    unset session_secret
+fi
+
+runtime_owner_mode="$(stat -c '%U:%G:%a' /etc/cloudops/runtime.env)"
+[[ "$runtime_owner_mode" == root:root:600 ]]
+
+cat > /etc/cloudwatch-agent-cloudops.json <<'JSON'
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {"file_path": "/var/log/cloudops-bootstrap.log", "log_group_name": "/cloudops/app", "log_stream_name": "{instance_id}/bootstrap"},
+          {"file_path": "/var/log/cloudops-deploy.log", "log_group_name": "/cloudops/app", "log_stream_name": "{instance_id}/deploy"}
+        ]
+      }
+    }
+  }
+}
+JSON
+chmod 0600 /etc/cloudwatch-agent-cloudops.json
+aws logs describe-log-groups --region "$AWS_REGION" --log-group-name-prefix "$LOG_GROUP" --query "logGroups[?logGroupName=='${LOG_GROUP}'].logGroupName | [0]" --output text | grep -Fx "$LOG_GROUP" >/dev/null
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+    -a fetch-config -m ec2 -c file:/etc/cloudwatch-agent-cloudops.json -s
+
+tmp_dir="$(mktemp -d /run/cloudops-bootstrap.XXXXXX)"
+trap 'rm -rf -- "$tmp_dir"' EXIT
+curl --fail --silent --show-error --location "$RAW_BASE/cloudops-deploy.sh" -o "$tmp_dir/cloudops-deploy.sh"
+curl --fail --silent --show-error --location "$RAW_BASE/cloudops-verify.sh" -o "$tmp_dir/cloudops-verify.sh"
+printf '%s  %s\n' "$DEPLOY_SCRIPT_SHA256" "$tmp_dir/cloudops-deploy.sh" | sha256sum --check --status
+printf '%s  %s\n' "$VERIFY_SCRIPT_SHA256" "$tmp_dir/cloudops-verify.sh" | sha256sum --check --status
+install -o root -g root -m 0750 "$tmp_dir/cloudops-deploy.sh" /usr/local/sbin/cloudops-deploy.sh
+install -o root -g root -m 0750 "$tmp_dir/cloudops-verify.sh" /usr/local/sbin/cloudops-verify.sh
+/usr/local/sbin/cloudops-deploy.sh "$IMAGE_URI" "$APP_VERSION"
+printf 'CloudOps bootstrap completed for version %s.\n' "$APP_VERSION"

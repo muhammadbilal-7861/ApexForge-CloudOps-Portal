@@ -1,0 +1,51 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PullOnlyCloudOpsPortalImage",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DownloadCloudOpsPortalImage",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage"
+      ],
+      "Resource": "arn:aws:ecr:eu-north-1:489502663059:repository/apexforge-cloudops-portal"
+    },
+    {
+      "Sid": "ReadCloudOpsRuntimeSecrets",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": [
+        "arn:aws:secretsmanager:eu-north-1:489502663059:secret:cloudops/prod/mariadb-*",
+        "arn:aws:secretsmanager:eu-north-1:489502663059:secret:cloudops/prod/flask-session-key-*"
+      ]
+    },
+    {
+      "Sid": "WriteToPrecreatedCloudOpsLogGroup",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:eu-north-1:489502663059:log-group:/cloudops/app:log-stream:*"
+    },
+    {
+      "Sid": "ReadOnlyCloudOpsTargetHealth",
+      "Effect": "Allow",
+      "Action": "elasticloadbalancing:DescribeTargetHealth",
+      "Resource": "arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/*"
+    },
+    {
+      "Sid": "ConfirmPrecreatedCloudOpsLogGroup",
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "*"
+    }
+  ]
+}
