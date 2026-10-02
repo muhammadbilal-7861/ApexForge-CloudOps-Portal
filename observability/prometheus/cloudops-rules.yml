@@ -1,0 +1,58 @@
+groups:
+- name: cloudops
+  rules:
+  - alert: CloudOpsAppDown
+    expr: up{job="cloudops-app"} == 0
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: App scrape failed for two minutes
+  - alert: CloudOpsNoDiscoveredApps
+    expr: absent(up{job="cloudops-app"})
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: No tagged running app targets discovered
+  - alert: CloudOpsHigh5xx
+    expr: (sum by (ec2_instance_id) (rate(cloudops_http_requests_total{job="cloudops-app",status=~"5.."}[5m]))
+      / sum by (ec2_instance_id) (rate(cloudops_http_requests_total{job="cloudops-app"}[5m]))
+      > 0.05) and (sum by (ec2_instance_id) (increase(cloudops_http_requests_total{job="cloudops-app"}[5m]))
+      >= 100)
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: Over five percent 5xx with at least 100 requests in five minutes
+  - alert: CloudOpsHighLatency
+    expr: histogram_quantile(0.95, sum by (le,ec2_instance_id) (rate(cloudops_http_request_duration_seconds_bucket{job="cloudops-app"}[5m])))
+      > 1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: p95 request duration over one second
+  - alert: CloudOpsHighCPU
+    expr: 1 - avg by (ec2_instance_id) (rate(node_cpu_seconds_total{job="cloudops-node",mode="idle"}[5m]))
+      > 0.9
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: Host CPU above ninety percent
+  - alert: CloudOpsReadinessOutage
+    expr: probe_success{job="cloudops-ready"} == 0
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: 'Readiness probe failed: DB, app, network or probe failure; inspect
+        before attributing to RDS'
+  - alert: CloudOpsReadyProbeDown
+    expr: up{job="cloudops-ready"} == 0
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: Readiness exporter scrape unavailable

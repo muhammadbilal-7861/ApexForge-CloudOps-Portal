@@ -1,0 +1,93 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+rule_files:
+- /etc/prometheus/cloudops-rules.yml
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      - 127.0.0.1:9093
+scrape_configs:
+- job_name: cloudops-app
+  ec2_sd_configs:
+  - region: eu-north-1
+    port: 5000
+    refresh_interval: 60s
+    filters:
+    - name: vpc-id
+      values:
+      - vpc-080d46671dbdcacab
+    - name: instance-state-name
+      values:
+      - running
+    - name: tag:Role
+      values:
+      - app
+    - name: tag:Monitoring
+      values:
+      - enabled
+  relabel_configs:
+  - source_labels:
+    - __meta_ec2_instance_id
+    target_label: ec2_instance_id
+- job_name: cloudops-node
+  ec2_sd_configs:
+  - region: eu-north-1
+    port: 9100
+    refresh_interval: 60s
+    filters:
+    - name: vpc-id
+      values:
+      - vpc-080d46671dbdcacab
+    - name: instance-state-name
+      values:
+      - running
+    - name: tag:Role
+      values:
+      - app
+    - name: tag:Monitoring
+      values:
+      - enabled
+    - name: tag:NodeExporter
+      values:
+      - enabled
+  relabel_configs:
+  - source_labels:
+    - __meta_ec2_instance_id
+    target_label: ec2_instance_id
+- job_name: cloudops-ready
+  ec2_sd_configs:
+  - region: eu-north-1
+    port: 5000
+    refresh_interval: 60s
+    filters:
+    - name: vpc-id
+      values:
+      - vpc-080d46671dbdcacab
+    - name: instance-state-name
+      values:
+      - running
+    - name: tag:Role
+      values:
+      - app
+    - name: tag:Monitoring
+      values:
+      - enabled
+  relabel_configs:
+  - source_labels:
+    - __address__
+    target_label: __param_target
+    replacement: http://${1}/ready
+  - source_labels:
+    - __param_target
+    target_label: instance
+  - source_labels:
+    - __meta_ec2_instance_id
+    target_label: ec2_instance_id
+  - target_label: __address__
+    replacement: 127.0.0.1:9115
+  metrics_path: /probe
+  params:
+    module:
+    - http_ready

@@ -1,0 +1,19 @@
+[Unit]
+Description=CloudOps scoped journal collector
+Wants=network-online.target
+After=network-online.target docker.service
+[Service]
+User=alloy
+Group=alloy
+SupplementaryGroups=systemd-journal
+EnvironmentFile=/etc/cloudops-alloy/runtime.env
+ExecStart=/usr/local/bin/alloy run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/cloudops-alloy /etc/cloudops-alloy/config.alloy
+Restart=on-failure
+RestartSec=10
+StateDirectory=cloudops-alloy
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,305 @@
+{
+  "uid": "cloudops-observability-example",
+  "title": "CloudOps (worker counters require reconciliation)",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "tags": [
+    "cloudops"
+  ],
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Existing Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    },
+    {
+      "name": "DS_LOKI",
+      "label": "Existing Loki",
+      "type": "datasource",
+      "pluginId": "loki",
+      "pluginName": "Loki"
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(cloudops_http_requests_total{job=\"cloudops-app\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "5xx ratio",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(cloudops_http_requests_total{job=\"cloudops-app\",status=~\"5..\"}[5m])) / sum(rate(cloudops_http_requests_total{job=\"cloudops-app\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "All HTTP errors / s (4xx + 5xx)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(cloudops_http_errors_total{job=\"cloudops-app\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "p95 request seconds",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95,sum by (le) (rate(cloudops_http_request_duration_seconds_bucket{job=\"cloudops-app\"}[5m])))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "/ready availability (requires blackbox)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "probe_success{job=\"cloudops-ready\"}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "CPU utilization",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - avg by(ec2_instance_id)(rate(node_cpu_seconds_total{job=\"cloudops-node\",mode=\"idle\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Memory utilization",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - node_memory_MemAvailable_bytes{job=\"cloudops-node\"} / node_memory_MemTotal_bytes{job=\"cloudops-node\"}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Disk utilization",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - node_filesystem_avail_bytes{job=\"cloudops-node\",fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{job=\"cloudops-node\",fstype!~\"tmpfs|overlay|squashfs\"}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Scrapeable discovered app instances (not ALB/ASG health)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(up{job=\"cloudops-app\"})"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Login failures / s",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(cloudops_login_failure_total{job=\"cloudops-app\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "DB errors / s",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(cloudops_db_errors_total{job=\"cloudops-app\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Login attempts / s",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(cloudops_login_attempts_total{job=\"cloudops-app\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Sanitized request logs; request_id in log body",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "${DS_LOKI}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=\"cloudops\"} | logfmt"
+        }
+      ]
+    }
+  ]
+}
