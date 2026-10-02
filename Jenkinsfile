@@ -5,7 +5,7 @@ pipeline {
         skipDefaultCheckout(true)
         timestamps()
         disableConcurrentBuilds()
-        timeout(time: 60, unit: 'MINUTES')
+        timeout(time: 120, unit: 'MINUTES')
     }
 
     parameters {
@@ -18,6 +18,16 @@ pipeline {
             name: 'TRIVY_EXIT_CODE',
             choices: ['1', '0'],
             description: '1 fails on matching Trivy findings; 0 reports findings without failing.'
+        )
+        choice(
+            name: 'DEPLOY_TARGET',
+            choices: ['none', 'canary', 'asg'],
+            description: 'Deployment is opt-in. Canary targets the prepared existing EC2 instance; ASG performs a controlled launch-template rollout.'
+        )
+        booleanParam(
+            name: 'ASG_AMI_REVIEWED',
+            defaultValue: false,
+            description: 'For ASG only: confirm the configured AMI was manually reviewed as sanitized and contains no credentials or app state.'
         )
     }
 
@@ -53,6 +63,10 @@ pipeline {
                 script {
                     env.GIT_COMMIT_SHORT = sh(
                         script: 'git rev-parse --short=12 HEAD',
+                        returnStdout: true
+                    ).trim()
+                    env.GIT_COMMIT_FULL = sh(
+                        script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
                     env.APP_IMAGE_REF = "${env.APP_IMAGE_NAME}:${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
@@ -403,9 +417,107 @@ pipeline {
             }
         }
 
-        stage('Production approval / deployment - placeholder') {
+        stage('Authorize opt-in deployment') {
+            when {
+                expression { params.DEPLOY_TARGET in ['canary', 'asg'] }
+            }
             steps {
-                echo 'Placeholder only: no production approval or deployment is performed by this pipeline.'
+                script {
+                    sh '''#!/bin/bash
+                        set -euo pipefail
+                        set +x
+                        [[ "$SCM_BRANCH" == main ]] || { echo 'Deployment is restricted to main.' >&2; exit 1; }
+                        [[ "$TRIVY_SEVERITY" == 'HIGH,CRITICAL' && "$TRIVY_EXIT_CODE" == '1' ]] || {
+                            echo 'Deployment requires HIGH,CRITICAL reporting and enabled Trivy blocking gates.' >&2; exit 1;
+                        }
+                        bash deploy/assert-deploy-context.sh
+                    '''
+                    if (params.DEPLOY_TARGET == 'asg' && !params.ASG_AMI_REVIEWED) {
+                        error('ASG deployment requires ASG_AMI_REVIEWED=true after manual AMI sanitization review.')
+                    }
+                    def digest = sh(
+                        script: '''#!/bin/bash
+                            set -euo pipefail
+                            docker run --rm --network host --volumes-from jenkins \\
+                                --env AWS_REGION="$AWS_REGION" --env AWS_DEFAULT_REGION="$AWS_REGION" \\
+                                "$AWS_CLI_IMAGE" ecr describe-repositories \\
+                                --repository-names "$ECR_REPOSITORY" \\
+                                --query 'repositories[0].imageTagMutability' --output text | grep -Fx IMMUTABLE >/dev/null
+                            docker run --rm --network host --volumes-from jenkins \\
+                                --env AWS_REGION="$AWS_REGION" --env AWS_DEFAULT_REGION="$AWS_REGION" \\
+                                "$AWS_CLI_IMAGE" ecr describe-images \\
+                                --repository-name "$ECR_REPOSITORY" \\
+                                --image-ids "imageTag=$GIT_COMMIT_SHORT" \\
+                                --query 'imageDetails[0].imageDigest' --output text
+                        ''',
+                        returnStdout: true
+                    ).trim()
+                    if (!digest.matches('sha256:[0-9a-f]{64}')) {
+                        error('ECR did not return a valid immutable image digest.')
+                    }
+                    env.ECR_IMAGE_DIGEST = digest
+                    env.ECR_DEPLOY_IMAGE = "${env.ECR_URI}@${digest}"
+                    sh '''#!/bin/bash
+                        set -euo pipefail
+                        mkdir -p reports
+                        printf '{"commit":"%s","image":"%s","target":"%s"}\\n' \\
+                            "$GIT_COMMIT_FULL" "$ECR_DEPLOY_IMAGE" "$DEPLOY_TARGET" > reports/deployment-release.json
+                    '''
+                    withEnv(["ECR_DEPLOY_IMAGE=${env.ECR_DEPLOY_IMAGE ?: ''}", "ECR_IMAGE_DIGEST=${env.ECR_IMAGE_DIGEST ?: ''}"]) {
+                        sh '''#!/bin/bash
+                            set -euo pipefail
+                            bash deploy/collect-cloudops-preflight.sh "$DEPLOY_TARGET"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Manual deployment approval') {
+            when {
+                expression { params.DEPLOY_TARGET in ['canary', 'asg'] }
+            }
+            steps {
+                timeout(time: 15, unit: 'MINUTES') {
+                    input message: "Deploy ${env.GIT_COMMIT_SHORT} to ${params.DEPLOY_TARGET}? Read-only architecture and security preflight passed.", ok: 'Approve deployment'
+                }
+            }
+        }
+
+        stage('Canary deployment') {
+            when {
+                expression { params.DEPLOY_TARGET == 'canary' }
+            }
+            steps {
+                sh '''#!/bin/bash
+                    set -euo pipefail
+                    set +x
+                    bash deploy/cloudops-ssm-deploy.sh deploy i-02777a62f2a65bc1e
+                    mkdir -p reports
+                    printf '{"target":"canary","instance":"i-02777a62f2a65bc1e","commit":"%s","image":"%s","result":"verified"}\\n' \\
+                        "$GIT_COMMIT_FULL" "$ECR_DEPLOY_IMAGE" > reports/deployment-evidence.json
+                '''
+            }
+        }
+
+        stage('ASG rolling deployment') {
+            when {
+                expression { params.DEPLOY_TARGET == 'asg' }
+            }
+            steps {
+                withEnv(["ASG_AMI_REVIEWED=${params.ASG_AMI_REVIEWED}"]) {
+                    sh '''#!/bin/bash
+                        set -euo pipefail
+                        set +x
+                        bash deploy/cloudops-asg-rollout.sh
+                    '''
+                }
+            }
+        }
+
+        stage('Post-deployment extension point - no-op') {
+            steps {
+                echo 'No additional production action is configured after the selected deployment target.'
             }
         }
     }
