@@ -6,12 +6,78 @@ readonly AWS_REGION="eu-north-1"
 readonly ECR_REGISTRY="489502663059.dkr.ecr.eu-north-1.amazonaws.com"
 readonly RUNTIME_ENV="${CLOUDOPS_RUNTIME_ENV:-/etc/cloudops/runtime.env}"
 readonly CONTAINER_NAME="cloudops-app"
+readonly LEGACY_CONTAINER_NAME="cloudops-flask"
 readonly LEGACY_IMAGE="cloudops-flask:1.1"
 readonly VERIFY_SCRIPT="${CLOUDOPS_VERIFY_SCRIPT:-/usr/local/sbin/cloudops-verify.sh}"
 
 log() { printf '[cloudops-deploy] %s\n' "$*"; }
 fail() { printf '[cloudops-deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 container_exists() { docker inspect "$1" >/dev/null 2>&1; }
+
+validate_legacy_network() {
+    local network="$1" bindings="$2" container_id="$3" published_ports
+    if [[ "$network" == bridge ]]; then
+        published_ports="$(docker port "$container_id" 5000/tcp)" || fail 'legacy bridge container has no active host port publication.'
+        python3 - "$bindings" "$published_ports" <<'PY'
+import json
+import sys
+
+try:
+    bindings = json.loads(sys.argv[1])
+except json.JSONDecodeError:
+    raise SystemExit("legacy port bindings are malformed")
+if not isinstance(bindings, dict) or set(bindings) != {"5000/tcp"}:
+    raise SystemExit("legacy container has unexpected published ports")
+entries = bindings["5000/tcp"]
+if not isinstance(entries, list) or not 1 <= len(entries) <= 2:
+    raise SystemExit("legacy container must publish only host port 5000")
+expected_hosts = set()
+for entry in entries:
+    if not isinstance(entry, dict) or entry.get("HostPort") != "5000":
+        raise SystemExit("legacy container has an unexpected host port mapping")
+    host = entry.get("HostIp", "")
+    if host not in ("", "0.0.0.0", "::"):
+        raise SystemExit("legacy container has an unexpected host bind address")
+    expected_hosts.add("0.0.0.0" if host == "" else host)
+if len(expected_hosts) != len(entries):
+    raise SystemExit("legacy container has duplicate host port bindings")
+
+published_hosts = set()
+published_lines = [line for line in sys.argv[2].splitlines() if line.strip()]
+if len(published_lines) != len(entries):
+    raise SystemExit("legacy container's active publication count differs from its inventoried port mapping")
+for line in published_lines:
+    line = line.strip()
+    if line.startswith("[") and "]:" in line:
+        host, port = line[1:].rsplit("]:", 1)
+    elif ":" in line:
+        host, port = line.rsplit(":", 1)
+    else:
+        raise SystemExit("legacy container has an unrecognized active port publication")
+    if port != "5000" or host not in ("0.0.0.0", "::"):
+        raise SystemExit("legacy container is not published exclusively on host port 5000")
+    published_hosts.add(host)
+if published_hosts != expected_hosts:
+    raise SystemExit("legacy container's active publication differs from its inventoried port mapping")
+PY
+        return
+    fi
+
+    if [[ "$network" == host ]]; then
+        python3 - "$bindings" <<'PY'
+import json
+import sys
+try:
+    bindings = json.loads(sys.argv[1])
+except json.JSONDecodeError:
+    raise SystemExit("legacy host-network port bindings are malformed")
+if bindings not in (None, {}):
+    raise SystemExit("legacy host-network container has unexpected published port mappings")
+PY
+        return
+    fi
+    fail "legacy container uses unexpected Docker network '$network'."
+}
 
 if ((EUID != 0)); then
     fail 'run this deployment as root through SSM or cloud-init.'
@@ -107,6 +173,8 @@ previous_id=""
 previous_name=""
 previous_image=""
 previous_version=""
+previous_network=""
+previous_port_bindings=""
 previous_kind="none"
 if container_exists "$CONTAINER_NAME"; then
     service_label="$(docker inspect --format '{{index .Config.Labels "service"}}' "$CONTAINER_NAME")"
@@ -115,8 +183,11 @@ if container_exists "$CONTAINER_NAME"; then
     previous_name="$CONTAINER_NAME"
     previous_image="$(docker inspect --format '{{.Config.Image}}' "$previous_id")"
     previous_version="$(docker inspect --format '{{index .Config.Labels "org.apexforge.version"}}' "$previous_id")"
+    previous_network="$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$previous_id")"
+    previous_port_bindings="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$previous_id")"
     [[ "$(docker inspect --format '{{.State.Running}}' "$previous_id")" == true ]] || fail 'managed prior container is stopped; inspect it before retrying.'
-    [[ "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$previous_id")" == host ]] || fail 'managed prior container is not using host networking.'
+    [[ "$previous_network" == host ]] || fail 'managed prior container is not using host networking.'
+    [[ "$previous_port_bindings" == null || "$previous_port_bindings" == '{}' ]] || fail 'managed prior container has unexpected host port bindings.'
     docker inspect --format 'inventoried prior managed container name={{.Name}} image={{.Config.Image}} mounts={{json .Mounts}}' "$previous_id"
     previous_kind=managed
 else
@@ -128,10 +199,16 @@ else
         previous_name="$(docker inspect --format '{{.Name}}' "$previous_id")"
         previous_name="${previous_name#/}"
         previous_image="$(docker inspect --format '{{.Config.Image}}' "$previous_id")"
+        previous_network="$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$previous_id")"
+        previous_port_bindings="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$previous_id")"
+        [[ "$previous_name" == "$LEGACY_CONTAINER_NAME" ]] || fail "legacy image is running in unexpected container '$previous_name'; refusing to guess its identity."
         [[ "$previous_image" == "$LEGACY_IMAGE" ]] || fail "legacy container's exact image differs from $LEGACY_IMAGE."
-        [[ "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$previous_id")" == host ]] || fail 'legacy container is not using host networking.'
+        [[ "$(docker inspect --format '{{.State.Running}}' "$previous_id")" == true ]] || fail 'legacy container is not running.'
+        validate_legacy_network "$previous_network" "$previous_port_bindings" "$previous_id" || fail 'legacy container network or published ports failed validation.'
         docker inspect --format 'inventoried prior legacy container name={{.Name}} image={{.Config.Image}} mounts={{json .Mounts}}' "$previous_id"
         previous_kind=legacy
+    elif container_exists "$LEGACY_CONTAINER_NAME"; then
+        fail 'the exact legacy container exists but is not running under its expected image; refusing to replace it.'
     fi
 fi
 
@@ -200,6 +277,16 @@ if ! "$VERIFY_SCRIPT" --expected-image "$image_uri" --expected-version "$app_ver
     fail 'candidate /health, /ready, Docker healthcheck, or API route verification failed; previous port-5000 service remains running.'
 fi
 
+if [[ "$previous_kind" == legacy ]]; then
+    prior_health="$(curl --connect-timeout 3 --max-time 8 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:5000/health || true)"
+    prior_ready="$(curl --connect-timeout 3 --max-time 8 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:5000/ready || true)"
+    if [[ "$prior_health" != 200 || "$prior_ready" != 200 ]]; then
+        docker stop --time 10 "$candidate_id" >/dev/null 2>&1 || true
+        docker rename "$candidate_id" "$candidate_retained" >/dev/null 2>&1 || true
+        fail 'legacy bridge service stopped passing /health or /ready during candidate verification; it was not cut over.'
+    fi
+fi
+
 docker stop --time 10 "$candidate_id" >/dev/null
 docker rename "$candidate_id" "$candidate_retained"
 log "Candidate passed /health and /ready on port 5001 and was retained stopped as $candidate_retained."
@@ -240,7 +327,8 @@ restore_previous() {
             fi
             if [[ "$(docker inspect --format '{{.State.Running}}' "$previous_id")" != true \
                 || "$(docker inspect --format '{{.Config.Image}}' "$previous_id")" != "$previous_image" \
-                || "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$previous_id")" != host ]]; then
+                || "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$previous_id")" != "$previous_network" \
+                || "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$previous_id")" != "$previous_port_bindings" ]]; then
                 log 'CRITICAL: prior container identity or running state did not recover after rollback.' >&2
                 set -e
                 return 1
