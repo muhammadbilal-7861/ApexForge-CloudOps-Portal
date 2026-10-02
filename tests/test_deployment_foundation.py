@@ -369,6 +369,7 @@ def fmt(t,c):
     if t=="{{.State.Running}}": return str(c["running"]).lower()
     if t=="{{.HostConfig.NetworkMode}}": return c["network"]
     if t=="{{json .HostConfig.PortBindings}}": return json.dumps(c.get("port_bindings"))
+    if t=="{{json .NetworkSettings.Ports}}": return json.dumps(c.get("active_ports",c.get("port_bindings")))
     if t=="{{.Name}}": return "/"+c["name"]
     if t=="{{json .Mounts}}": return json.dumps(c["mounts"])
     if t=='{{index .Config.Labels "service"}}': return c["labels"].get("service","<no value>")
@@ -385,10 +386,14 @@ elif a[0]=="inspect":
     if c is None: sys.exit(1)
     if "--format" in a: print(fmt(a[a.index("--format")+1],c))
 elif a[0]=="port":
-    c=get(a[1]); bindings=c.get("port_bindings") or {}
-    for entry in bindings.get("5000/tcp",[]):
-        host=entry.get("HostIp") or "0.0.0.0"
-        print(f'{host}:{entry["HostPort"]}')
+    c=get(a[1]); bindings=c.get("active_ports",c.get("port_bindings")) or {}
+    if "publications" in c: print(c["publications"])
+    else:
+        for port,entries in bindings.items():
+            for entry in entries or []:
+                host=entry.get("HostIp") or "0.0.0.0"
+                if host=="::": host="[::]"
+                print(f'{port} -> {host}:{entry["HostPort"]}')
 elif a[0]=="pull": sys.exit(1) if os.getenv("TEST_ECR_PULL_FAIL")=="true" else None
 elif a[0]=="login": sys.stdin.read()
 elif a[0]=="run":
@@ -479,13 +484,17 @@ def run_fake_deploy(host: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def configure_legacy_bridge(host: dict[str, str], port_bindings: dict[str, list[dict[str, str]]] | None = None) -> None:
+def configure_legacy_bridge(host: dict[str, str], port_bindings: dict[str, list[dict[str, str]]] | None = None, *, dual_stack: bool = False) -> None:
     state_path = Path(host["state"])
     state = json.loads(state_path.read_text())
     state["containers"]["legacy-1"]["network"] = "bridge"
     state["containers"]["legacy-1"]["port_bindings"] = port_bindings or {
         "5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}],
     }
+    if dual_stack:
+        state["containers"]["legacy-1"]["active_ports"] = {
+            "5000/tcp": [{"HostIp": address, "HostPort": "5000"} for address in ("0.0.0.0", "::")],
+        }
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
@@ -519,10 +528,11 @@ def test_successful_canary_candidate_cutover_retains_previous_container(fake_can
     assert candidate["running"] is False
 
 
+@pytest.mark.parametrize("dual_stack", [False, True])
 def test_successful_bridge_legacy_canary_cutover_preserves_original_container_configuration(
-    fake_canary_host: dict[str, str],
+    fake_canary_host: dict[str, str], dual_stack: bool,
 ) -> None:
-    configure_legacy_bridge(fake_canary_host)
+    configure_legacy_bridge(fake_canary_host, dual_stack=dual_stack)
     result = run_fake_deploy(fake_canary_host)
     assert result.returncode == 0, result.stdout + result.stderr
     state = json.loads(Path(fake_canary_host["state"]).read_text())
@@ -556,10 +566,11 @@ def test_bridge_legacy_candidate_failure_leaves_original_serving_port_5000(
     assert not any(item["name"] == "cloudops-app" for item in state["containers"].values())
 
 
+@pytest.mark.parametrize("dual_stack", [False, True])
 def test_bridge_legacy_production_failure_restarts_original_publication(
-    fake_canary_host: dict[str, str],
+    fake_canary_host: dict[str, str], dual_stack: bool,
 ) -> None:
-    configure_legacy_bridge(fake_canary_host)
+    configure_legacy_bridge(fake_canary_host, dual_stack=dual_stack)
     fake_canary_host["env"]["TEST_PRODUCTION_HTTP"] = "503"
     fake_canary_host["env"]["TEST_PRODUCTION_READY"] = "503"
     result = run_fake_deploy(fake_canary_host)
@@ -572,10 +583,11 @@ def test_bridge_legacy_production_failure_restarts_original_publication(
     assert previous["port_bindings"] == {"5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}]}
 
 
+@pytest.mark.parametrize("dual_stack", [False, True])
 def test_bridge_legacy_alb_failure_restores_original_and_waits_for_target_health(
-    fake_canary_host: dict[str, str],
+    fake_canary_host: dict[str, str], dual_stack: bool,
 ) -> None:
-    configure_legacy_bridge(fake_canary_host)
+    configure_legacy_bridge(fake_canary_host, dual_stack=dual_stack)
     fake_canary_host["env"]["TEST_ALB_HEALTHY"] = "false"
     result = run_fake_deploy(fake_canary_host)
     assert result.returncode != 0
@@ -622,6 +634,67 @@ def test_ambiguous_running_legacy_images_are_rejected_before_candidate(fake_cana
     assert state["containers"]["legacy-1"]["running"] is True
     assert state["containers"]["legacy-2"]["running"] is True
     assert not any("candidate" in item["name"] for item in state["containers"].values())
+
+
+@pytest.mark.parametrize("configured,active,publication,accepted", [
+    ([""], ["0.0.0.0"], None, True),
+    ([""], ["0.0.0.0", "::"], None, True),
+    (["0.0.0.0"], ["0.0.0.0", "::"], None, True),
+    (["0.0.0.0", "::"], ["0.0.0.0", "::"], None, True),
+    (["::"], ["::"], None, True),
+    (["0.0.0.0", "0.0.0.0"], ["0.0.0.0"], None, False),
+    (["", "::"], ["0.0.0.0", "::"], None, False),
+    (["0.0.0.0"], ["0.0.0.0", "0.0.0.0"], None, False),
+    (["0.0.0.0"], ["127.0.0.1"], None, False),
+    (["127.0.0.1"], ["127.0.0.1"], None, False),
+    (["0.0.0.0", "::"], ["0.0.0.0"], None, False),
+    (["::"], ["0.0.0.0", "::"], None, False),
+    (["0.0.0.0"], ["0.0.0.0"], "5000/tcp -> 0.0.0.0:5000\n5000/tcp -> 0.0.0.0:5000", False),
+    (["0.0.0.0"], ["0.0.0.0"], "5000/tcp -> 0.0.0.0:5000\n8080/tcp -> 0.0.0.0:8080", False),
+    (["0.0.0.0"], ["0.0.0.0"], "5000/tcp -> 0.0.0.0:5001", False),
+    (["0.0.0.0"], ["0.0.0.0", "::"], "5000/tcp -> 0.0.0.0:5000", False),
+])
+def test_effective_legacy_publications(
+    fake_canary_host, configured, active, publication, accepted,
+) -> None:
+    bindings = {"5000/tcp": [{"HostIp": host, "HostPort": "5000"} for host in configured]}
+    configure_legacy_bridge(fake_canary_host, bindings)
+    state_path = Path(fake_canary_host["state"])
+    state = json.loads(state_path.read_text())
+    legacy = state["containers"]["legacy-1"]
+    legacy["active_ports"] = {"5000/tcp": [{"HostIp": host, "HostPort": "5000"} for host in active]}
+    if publication is not None:
+        legacy["publications"] = publication
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    script = (ROOT / "deploy/cloudops-deploy.sh").read_text()
+    validator = script[script.index("validate_legacy_network() {"):script.index("if ((EUID != 0));")]
+    result = subprocess.run(
+        ["bash", "-eu", "-c", validator + '\nvalidate_legacy_network bridge "$1" legacy-1',
+         "validator", json.dumps(bindings)],
+        env=fake_canary_host["env"], capture_output=True, text=True, timeout=10,
+    )
+    assert (result.returncode == 0) == accepted, result.stdout + result.stderr
+    assert json.loads(state_path.read_text()) == state
+
+
+@pytest.mark.parametrize("source,port,host_port", [
+    ("port_bindings", "5000/tcp", "5001"),
+    ("active_ports", "5000/tcp", "5001"),
+    ("active_ports", "8080/tcp", "8080"),
+    ("active_ports", "5000/udp", "5000"),
+])
+def test_unexpected_inspected_publications_rejected(fake_canary_host, source, port, host_port) -> None:
+    configure_legacy_bridge(fake_canary_host)
+    state_path = Path(fake_canary_host["state"])
+    state = json.loads(state_path.read_text())
+    legacy = state["containers"]["legacy-1"]
+    legacy["active_ports"] = {"5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}]}
+    legacy[source][port] = [{"HostIp": "0.0.0.0", "HostPort": host_port}]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "network or published ports failed validation" in result.stdout
+    assert json.loads(state_path.read_text()) == state
 
 
 def test_successful_cutover_from_managed_previous_container(fake_canary_host: dict[str, str]) -> None:

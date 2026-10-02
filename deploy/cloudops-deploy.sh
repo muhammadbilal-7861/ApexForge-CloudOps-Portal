@@ -15,50 +15,64 @@ fail() { printf '[cloudops-deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 container_exists() { docker inspect "$1" >/dev/null 2>&1; }
 
 validate_legacy_network() {
-    local network="$1" bindings="$2" container_id="$3" published_ports
+    local network="$1" bindings="$2" container_id="$3" published_ports active_ports
     if [[ "$network" == bridge ]]; then
-        published_ports="$(docker port "$container_id" 5000/tcp)" || fail 'legacy bridge container has no active host port publication.'
-        python3 - "$bindings" "$published_ports" <<'PY'
+        active_ports="$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$container_id")" || return 1
+        # Read all publications so an unexpected container port cannot be hidden by a filter.
+        published_ports="$(docker port "$container_id")" || return 1
+        python3 - "$bindings" "$active_ports" "$published_ports" <<'PY'
 import json
+import re
 import sys
 
-try:
-    bindings = json.loads(sys.argv[1])
-except json.JSONDecodeError:
-    raise SystemExit("legacy port bindings are malformed")
-if not isinstance(bindings, dict) or set(bindings) != {"5000/tcp"}:
-    raise SystemExit("legacy container has unexpected published ports")
-entries = bindings["5000/tcp"]
-if not isinstance(entries, list) or not 1 <= len(entries) <= 2:
-    raise SystemExit("legacy container must publish only host port 5000")
-expected_hosts = set()
-for entry in entries:
-    if not isinstance(entry, dict) or entry.get("HostPort") != "5000":
-        raise SystemExit("legacy container has an unexpected host port mapping")
-    host = entry.get("HostIp", "")
-    if host not in ("", "0.0.0.0", "::"):
-        raise SystemExit("legacy container has an unexpected host bind address")
-    expected_hosts.add("0.0.0.0" if host == "" else host)
-if len(expected_hosts) != len(entries):
-    raise SystemExit("legacy container has duplicate host port bindings")
+def read_hosts(raw, configured=False):
+    try:
+        bindings = json.loads(raw)
+    except json.JSONDecodeError:
+        raise SystemExit("legacy port bindings are malformed")
+    if not isinstance(bindings, dict) or set(bindings) != {"5000/tcp"}:
+        raise SystemExit("legacy container has unexpected container ports")
+    entries = bindings["5000/tcp"]
+    if not isinstance(entries, list) or not 1 <= len(entries) <= 2:
+        raise SystemExit("legacy container must publish only host port 5000")
+    hosts = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("HostPort") != "5000":
+            raise SystemExit("legacy container has an unexpected host port mapping")
+        host = entry.get("HostIp")
+        allowed = ("", "0.0.0.0", "::") if configured else ("0.0.0.0", "::")
+        if host not in allowed:
+            raise SystemExit("legacy container has an unexpected host bind address")
+        if host in hosts:
+            raise SystemExit("legacy container has duplicate port bindings")
+        hosts.add(host)
+    if "" in hosts and len(hosts) != 1:
+        raise SystemExit("legacy container has overlapping wildcard bindings")
+    return hosts
 
+configured_hosts = read_hosts(sys.argv[1], configured=True)
+active_hosts = read_hosts(sys.argv[2])
 published_hosts = set()
-published_lines = [line for line in sys.argv[2].splitlines() if line.strip()]
-if len(published_lines) != len(entries):
-    raise SystemExit("legacy container's active publication count differs from its inventoried port mapping")
-for line in published_lines:
-    line = line.strip()
-    if line.startswith("[") and "]:" in line:
-        host, port = line[1:].rsplit("]:", 1)
-    elif ":" in line:
-        host, port = line.rsplit(":", 1)
-    else:
-        raise SystemExit("legacy container has an unrecognized active port publication")
-    if port != "5000" or host not in ("0.0.0.0", "::"):
-        raise SystemExit("legacy container is not published exclusively on host port 5000")
+for line in sys.argv[3].splitlines():
+    match = re.fullmatch(r"5000/tcp -> (0\.0\.0\.0|\[::\]|::):5000", line.strip())
+    if not match:
+        raise SystemExit("legacy container has an unexpected docker port publication")
+    host = match.group(1).strip("[]")
+    if host in published_hosts:
+        raise SystemExit("legacy container has duplicate docker port publications")
     published_hosts.add(host)
-if published_hosts != expected_hosts:
-    raise SystemExit("legacy container's active publication differs from its inventoried port mapping")
+if published_hosts != active_hosts:
+    raise SystemExit("legacy container's NetworkSettings.Ports and docker port publications disagree")
+# Docker can expand one wildcard configuration into active IPv4 and IPv6 bindings.
+# Explicit families must remain present; no non-wildcard address or extra port is allowed.
+if configured_hosts == {""}:
+    compatible = active_hosts in ({"0.0.0.0"}, {"::"}, {"0.0.0.0", "::"})
+elif configured_hosts == {"0.0.0.0"}:
+    compatible = active_hosts in ({"0.0.0.0"}, {"0.0.0.0", "::"})
+else:
+    compatible = active_hosts == configured_hosts
+if not compatible:
+    raise SystemExit("legacy container's effective publication differs from its configured bindings")
 PY
         return
     fi
@@ -332,6 +346,13 @@ restore_previous() {
                 log 'CRITICAL: prior container identity or running state did not recover after rollback.' >&2
                 set -e
                 return 1
+            fi
+            if [[ "$previous_kind" == legacy ]]; then
+                validate_legacy_network "$previous_network" "$previous_port_bindings" "$previous_id" || {
+                    log 'CRITICAL: original legacy port publication did not recover after rollback.' >&2
+                    set -e
+                    return 1
+                }
             fi
             restored=true
         fi
