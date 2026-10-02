@@ -21,6 +21,7 @@ credentials
 *.tfvars
 !*.tfvars.example
 reports/
+.deploy-work/
 __pycache__/
 *.py[cod]
 .pytest_cache/

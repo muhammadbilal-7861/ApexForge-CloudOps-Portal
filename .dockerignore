@@ -13,6 +13,7 @@ venv
 .sonar
 .scannerwork
 reports
+.deploy-work
 tests
 .env
 .env.*
