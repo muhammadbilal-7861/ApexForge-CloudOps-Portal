@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def load_helper(name: str):
     spec = importlib.util.spec_from_file_location(name, ROOT / "deploy" / f"{name}.py")
-    assert spec and spec.loader
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -33,7 +34,8 @@ def test_deployment_is_opt_in_main_only_and_archives_reports() -> None:
     assert "expression { params.DEPLOY_TARGET == 'canary' }" in pipeline
     assert "expression { params.DEPLOY_TARGET == 'asg' }" in pipeline
     assert "archiveArtifacts artifacts: 'reports/**'" in pipeline
-    assert "TRIVY_SEVERITY" in pipeline and "TRIVY_EXIT_CODE" in pipeline
+    assert "TRIVY_SEVERITY" in pipeline
+    assert "TRIVY_EXIT_CODE" in pipeline
     assert "waitForQualityGate abortPipeline: true" in pipeline
     assert "CLOUDOPS_DEPLOY_APPROVERS" in pipeline
     assert "submitter: env.CLOUDOPS_DEPLOY_APPROVERS" in pipeline
@@ -133,7 +135,8 @@ def test_deploy_helper_never_deletes_volumes_or_prunes_images() -> None:
 def test_secret_handling_is_non_echoing_and_runtime_file_is_private() -> None:
     bootstrap = (ROOT / "deploy" / "cloudops-user-data.sh.tmpl").read_text(encoding="utf-8")
     deploy = (ROOT / "deploy" / "cloudops-deploy.sh").read_text(encoding="utf-8")
-    assert "set +x" in bootstrap and "set +x" in deploy
+    assert "set +x" in bootstrap
+    assert "set +x" in deploy
     assert "chmod 0600 \"$runtime_tmp\"" in bootstrap
     assert 'printf \'SECRET_KEY=%s\\n\' "$session_secret"' in bootstrap
     assert 'cat "$RUNTIME_ENV"' not in deploy
@@ -372,8 +375,10 @@ def test_successful_canary_candidate_cutover_retains_previous_container(fake_can
     production = next(item for item in state["containers"].values() if item["name"] == "cloudops-app")
     previous = state["containers"]["legacy-1"]
     candidate = next(item for item in state["containers"].values() if item["name"].startswith("cloudops-verified-"))
-    assert production["running"] and production["image"] == fake_canary_host["image"]
-    assert previous["running"] is False and previous["name"].startswith("cloudops-rollback-")
+    assert production["running"] is True
+    assert production["image"] == fake_canary_host["image"]
+    assert previous["running"] is False
+    assert previous["name"].startswith("cloudops-rollback-")
     assert previous["image"] == "cloudops-flask:1.1"
     assert candidate["running"] is False
 
@@ -393,8 +398,11 @@ def test_successful_cutover_from_managed_previous_container(fake_canary_host: di
     state = json.loads(state_path.read_text())
     old = state["containers"]["managed-1"]
     current = next(item for item in state["containers"].values() if item["name"] == "cloudops-app")
-    assert old["image"] == old_image and old["running"] is False and old["name"].startswith("cloudops-rollback-")
-    assert current["image"] == fake_canary_host["image"] and current["running"] is True
+    assert old["image"] == old_image
+    assert old["running"] is False
+    assert old["name"].startswith("cloudops-rollback-")
+    assert current["image"] == fake_canary_host["image"]
+    assert current["running"] is True
 
 
 def test_failed_candidate_keeps_legacy_running_and_never_cuts_over(fake_canary_host: dict[str, str]) -> None:
@@ -449,7 +457,8 @@ def test_failed_production_verification_restores_exact_previous_container(fake_c
     assert "Previous container restored" in result.stdout
     state = json.loads(Path(fake_canary_host["state"]).read_text())
     previous = state["containers"]["legacy-1"]
-    assert previous["running"] is True and previous["name"] == "cloudops-flask"
+    assert previous["running"] is True
+    assert previous["name"] == "cloudops-flask"
     assert previous["image"] == "cloudops-flask:1.1"
     assert any(item["name"].startswith("cloudops-failed-") and item["running"] is False for item in state["containers"].values())
 
@@ -461,5 +470,6 @@ def test_failed_required_alb_health_restores_previous_container(fake_canary_host
     assert "Previous container restored" in result.stdout
     state = json.loads(Path(fake_canary_host["state"]).read_text())
     previous = state["containers"]["legacy-1"]
-    assert previous["running"] is True and previous["name"] == "cloudops-flask"
+    assert previous["running"] is True
+    assert previous["name"] == "cloudops-flask"
     assert previous["image"] == "cloudops-flask:1.1"
