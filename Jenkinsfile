@@ -371,48 +371,7 @@ pipeline {
                 sh '''#!/bin/bash
                     set -euo pipefail
                     set +x
-
-                    aws_cli() {
-                        docker run --rm \
-                            --network host \
-                            --volumes-from jenkins \
-                            --env AWS_REGION="$AWS_REGION" \
-                            --env AWS_DEFAULT_REGION="$AWS_REGION" \
-                            "$AWS_CLI_IMAGE" "$@"
-                    }
-
-                    caller_arn="$(aws_cli sts get-caller-identity --query Arn --output text)"
-                    caller_account="$(aws_cli sts get-caller-identity --query Account --output text)"
-                    case "$caller_arn" in
-                        "arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${AWS_EXPECTED_ROLE}/"*) ;;
-                        *) echo 'Refusing ECR push: EC2 instance role does not match the expected role.' >&2; exit 1 ;;
-                    esac
-                    if [ "$caller_account" != "$AWS_ACCOUNT_ID" ]; then
-                        echo 'Refusing ECR push: AWS caller account does not match the configured account.' >&2
-                        exit 1
-                    fi
-
-                    docker_config="$(mktemp -d /tmp/apexforge-docker-config.XXXXXX)"
-                    trap 'rm -rf "$docker_config"' EXIT
-                    export DOCKER_CONFIG="$docker_config"
-
-                    aws_cli ecr get-login-password --region "$AWS_REGION" |
-                        docker login --username AWS --password-stdin "$ECR_REGISTRY"
-
-                    if ! git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}' >/dev/null; then
-                        echo 'Refusing ECR push: origin/main is not available in the checked-out repository.' >&2
-                        exit 1
-                    fi
-                    head_sha="$(git rev-parse HEAD)"
-                    main_sha="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
-                    if [ "$head_sha" != "$main_sha" ]; then
-                        echo 'Refusing ECR push: checked-out HEAD does not match origin/main.' >&2
-                        exit 1
-                    fi
-
-                    printf 'Publishing %s from build %s\n' "$ECR_REPOSITORY" "$BUILD_NUMBER"
-                    docker tag "$APP_IMAGE_REF" "$ECR_URI:$GIT_COMMIT_SHORT"
-                    docker push "$ECR_URI:$GIT_COMMIT_SHORT"
+                    python3 deploy/publish-ecr-image.py
                 '''
             }
         }
