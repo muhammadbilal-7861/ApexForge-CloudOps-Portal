@@ -1,0 +1,17 @@
+# Substitute existing UIDs, names, URLs and org ID BEFORE mounting. No delete/prune.
+apiVersion: 1
+datasources:
+  - name: ${CLOUDOPS_PROMETHEUS_NAME}
+    uid: ${CLOUDOPS_PROMETHEUS_UID}
+    type: prometheus
+    orgId: 1
+    access: proxy
+    url: ${CLOUDOPS_PROMETHEUS_URL}
+    editable: true
+  - name: ${CLOUDOPS_LOKI_NAME}
+    uid: ${CLOUDOPS_LOKI_UID}
+    type: loki
+    orgId: 1
+    access: proxy
+    url: ${CLOUDOPS_LOKI_URL}
+    editable: true

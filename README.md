@@ -99,7 +99,9 @@ Health is intentionally independent of dependencies so a DB outage does not make
 
 ## Observability
 
-`/metrics` exports `cloudops_http_requests_total`, `cloudops_http_errors_total`, request duration, login attempt/success/failure, database error, and S3 success/failure counters, plus default Python process metrics. Every response includes an `X-Request-ID` (incoming header reused when supplied). Logs go to stdout with timestamp, hostname, method, path, status, duration, user ID and request ID. Passwords, cookies and AWS credentials are not logged. Docker/Gunicorn captures stdout for a collector such as Grafana Alloy.
+Reuse the existing monitoring host with the required [discovery and reconciliation runbook](observability/README.md). It includes SSM-only tunnels, private EC2 discovery, scoped Alloy logs, Grafana examples, alert rules and validation scripts. Installed versions and storage must be inventoried before rollout; no second stack is created.
+
+Gunicorn currently runs two workers with process-local counters, so aggregate traffic panels and alerts have a documented limitation pending a separately tested multiprocess fix. Alloy forwards only sanitized fixed-route request summaries, excluding user IDs and raw exception/access logs. Live inventory review is required before merging the observability feature.
 
 ## Tests and helper commands
 

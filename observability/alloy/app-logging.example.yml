@@ -1,0 +1,7 @@
+# Merge only into the app's reviewed deployment compose, during a rollout.
+services:
+  app:
+    logging:
+      driver: journald
+      options:
+        tag: cloudops

@@ -1,0 +1,121 @@
+rule_files:
+- cloudops-rules.yml
+evaluation_interval: 30s
+tests:
+- interval: 30s
+  input_series:
+  - series: up{job="cloudops-app",ec2_instance_id="i-test"}
+    values: '0x10'
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: CloudOpsAppDown
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: CloudOpsAppDown
+    exp_alerts:
+    - exp_labels:
+        job: cloudops-app
+        ec2_instance_id: i-test
+        severity: critical
+      exp_annotations:
+        summary: App scrape failed for two minutes
+- interval: 30s
+  input_series:
+  - series: up{job="cloudops-app",ec2_instance_id="i-test"}
+    values: 1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: CloudOpsAppDown
+    exp_alerts: []
+- interval: 30s
+  input_series:
+  - series: cloudops_http_requests_total{job="cloudops-app",ec2_instance_id="i-test",method="GET",endpoint="ready",status="200"}
+    values: 0+1x40
+  - series: cloudops_http_requests_total{job="cloudops-app",ec2_instance_id="i-test",method="GET",endpoint="ready",status="500"}
+    values: 0+1x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: CloudOpsHigh5xx
+    exp_alerts: []
+- interval: 30s
+  input_series:
+  - series: cloudops_http_requests_total{job="cloudops-app",ec2_instance_id="i-test",method="GET",endpoint="ready",status="200"}
+    values: 0+45x40
+  - series: cloudops_http_requests_total{job="cloudops-app",ec2_instance_id="i-test",method="GET",endpoint="ready",status="500"}
+    values: 0+5x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: CloudOpsHigh5xx
+    exp_alerts:
+    - exp_labels:
+        ec2_instance_id: i-test
+        severity: warning
+      exp_annotations:
+        summary: Over five percent 5xx with at least 100 requests in five minutes
+- interval: 30s
+  input_series:
+  - series: probe_success{job="cloudops-ready",ec2_instance_id="i-test",instance="http://app:5000/ready"}
+    values: '0x10'
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: CloudOpsReadinessOutage
+    exp_alerts:
+    - exp_labels:
+        job: cloudops-ready
+        ec2_instance_id: i-test
+        instance: http://app:5000/ready
+        severity: critical
+      exp_annotations:
+        summary: 'Readiness probe failed: DB, app, network or probe failure; inspect
+          before attributing to RDS'
+- interval: 30s
+  input_series:
+  - series: up{job="cloudops-app",ec2_instance_id="i-test"}
+    values: 0x3 1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: CloudOpsAppDown
+    exp_alerts: []
+- interval: 30s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: CloudOpsNoDiscoveredApps
+    exp_alerts:
+    - exp_labels:
+        job: cloudops-app
+        severity: critical
+      exp_annotations:
+        summary: No tagged running app targets discovered
+- interval: 30s
+  input_series:
+  - series: node_cpu_seconds_total{job="cloudops-node",ec2_instance_id="i-test",cpu="0",mode="idle"}
+    values: 0+1x40
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: CloudOpsHighCPU
+    exp_alerts:
+    - exp_labels:
+        ec2_instance_id: i-test
+        severity: warning
+      exp_annotations:
+        summary: Host CPU above ninety percent
+- interval: 30s
+  input_series:
+  - series: cloudops_http_request_duration_seconds_bucket{job="cloudops-app",ec2_instance_id="i-test",method="GET",endpoint="ready",le="0.5"}
+    values: '0x40'
+  - series: cloudops_http_request_duration_seconds_bucket{job="cloudops-app",ec2_instance_id="i-test",method="GET",endpoint="ready",le="1"}
+    values: '0x40'
+  - series: cloudops_http_request_duration_seconds_bucket{job="cloudops-app",ec2_instance_id="i-test",method="GET",endpoint="ready",le="2"}
+    values: 0+45x40
+  - series: cloudops_http_request_duration_seconds_bucket{job="cloudops-app",ec2_instance_id="i-test",method="GET",endpoint="ready",le="+Inf"}
+    values: 0+45x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: CloudOpsHighLatency
+    exp_alerts:
+    - exp_labels:
+        ec2_instance_id: i-test
+        severity: warning
+      exp_annotations:
+        summary: p95 request duration over one second
