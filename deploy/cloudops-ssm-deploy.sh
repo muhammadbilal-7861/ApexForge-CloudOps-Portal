@@ -3,15 +3,19 @@ set -Eeuo pipefail
 set +x
 
 if (($# < 2)); then
-    printf 'Usage: %s deploy|verify INSTANCE_ID [INSTANCE_ID ...]\n' "$0" >&2
+    printf 'Usage: %s preflight|deploy|verify INSTANCE_ID [INSTANCE_ID ...]\n' "$0" >&2
     exit 2
 fi
 mode="$1"
 shift
-[[ "$mode" == deploy || "$mode" == verify ]] || { printf 'Mode must be deploy or verify.\n' >&2; exit 2; }
+[[ "$mode" == preflight || "$mode" == deploy || "$mode" == verify ]] || { printf 'Mode must be preflight, deploy, or verify.\n' >&2; exit 2; }
 instance_ids=("$@")
 if [[ "$mode" == deploy && ${#instance_ids[@]} -ne 1 ]]; then
     printf 'A canary deployment must target exactly one EC2 instance.\n' >&2
+    exit 2
+fi
+if [[ "$mode" == preflight && ${#instance_ids[@]} -ne 1 ]]; then
+    printf 'Canary preflight must target exactly one EC2 instance.\n' >&2
     exit 2
 fi
 
@@ -81,6 +85,7 @@ done
 
 deploy_sha="$(sha256sum deploy/cloudops-deploy.sh | awk '{print $1}')"
 verify_sha="$(sha256sum deploy/cloudops-verify.sh | awk '{print $1}')"
+preflight_sha="$(sha256sum deploy/cloudops-canary-preflight.sh | awk '{print $1}')"
 ssm_json="$work_dir/ssm-${mode}-command.json"
 render_args=(
     --mode "$mode"
@@ -89,10 +94,11 @@ render_args=(
     --commit "$GIT_COMMIT_FULL"
     --deploy-sha256 "$deploy_sha"
     --verify-sha256 "$verify_sha"
+    --preflight-sha256 "$preflight_sha"
     --target-group-arn "$target_group_arn"
     --instance-ids "${instance_ids[@]}"
 )
-if [[ "$mode" == verify ]]; then
+if [[ "$mode" == verify || "$mode" == deploy ]]; then
     render_args+=(--require-target-healthy)
 fi
 docker run --rm \

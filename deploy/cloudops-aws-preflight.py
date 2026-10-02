@@ -155,7 +155,7 @@ def validate_common(directory: Path, mode: str) -> tuple[str, list[str]]:
         subnet_ids = set((asg.get("VPCZoneIdentifier") or "").split(","))
         if subnet_ids != EXPECTED["app_subnets"]:
             raise PreflightError("ASG subnets differ from the two approved private subnets")
-        if target_group.get("TargetGroupARN") not in asg.get("TargetGroupARNs", []):
+        if target_group.get("TargetGroupArn") not in asg.get("TargetGroupARNs", []):
             raise PreflightError("ASG is not attached to the existing tg-cloudops-app")
         launch_template = asg.get("LaunchTemplate", {})
         if launch_template.get("LaunchTemplateId") != EXPECTED["launch_template_id"]:

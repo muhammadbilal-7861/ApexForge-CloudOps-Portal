@@ -79,3 +79,8 @@ docker run --rm \
     --volumes-from jenkins \
     --workdir "$WORKSPACE" \
     "$PYTHON_IMAGE" python deploy/cloudops-aws-preflight.py --mode "$mode" --input-dir "$work_dir"
+
+if [[ "$mode" == canary ]]; then
+    # SSM Run Command performs secret-safe checks using the target instance role before approval.
+    bash deploy/cloudops-ssm-deploy.sh preflight i-02777a62f2a65bc1e
+fi

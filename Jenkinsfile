@@ -478,8 +478,18 @@ pipeline {
                 expression { params.DEPLOY_TARGET in ['canary', 'asg'] }
             }
             steps {
+                script {
+                    if (!env.CLOUDOPS_DEPLOY_APPROVERS || !env.CLOUDOPS_DEPLOY_APPROVERS.trim()) {
+                        error('Set the Jenkins global environment variable CLOUDOPS_DEPLOY_APPROVERS to the approved user IDs before enabling deployment.')
+                    }
+                }
                 timeout(time: 15, unit: 'MINUTES') {
-                    input message: "Deploy ${env.GIT_COMMIT_SHORT} to ${params.DEPLOY_TARGET}? Read-only architecture and security preflight passed.", ok: 'Approve deployment'
+                    input(
+                        message: "Deploy ${env.GIT_COMMIT_SHORT} to ${params.DEPLOY_TARGET}? Read-only architecture and security preflight passed.",
+                        ok: 'Approve deployment',
+                        submitter: env.CLOUDOPS_DEPLOY_APPROVERS,
+                        submitterParameter: 'DEPLOY_APPROVED_BY'
+                    )
                 }
             }
         }
