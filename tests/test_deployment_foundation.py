@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -352,17 +353,20 @@ def fake_canary_host(tmp_path: Path) -> dict[str, str]:
     state_path = tmp_path / "docker-state.json"
     secret = "test-stable-session-signing-key-0123456789abcdef"
     state_path.write_text(json.dumps({"containers": {
-        "legacy-1": {"id": "legacy-1", "name": "cloudops-flask", "image": "cloudops-flask:1.1", "running": True, "network": "host", "labels": {}, "health": "none", "mounts": []}
+        "legacy-1": {"id": hashlib.sha256(b"legacy-1").hexdigest(), "name": "cloudops-flask", "image": "cloudops-flask:1.1", "running": True, "network": "host", "labels": {}, "health": "none", "mounts": []}
     }, "next": 0}), encoding="utf-8")
 
     docker_stub = r'''#!/usr/bin/env python3
-import json, os, sys
+import hashlib, json, os, sys
 p=os.environ["DOCKER_STATE"]
 state=json.load(open(p)); cs=state["containers"]; a=sys.argv[1:]
+with open(os.environ["DOCKER_CALLS"],"a") as log: log.write(json.dumps(a)+"\n")
 def save(): json.dump(state,open(p,"w"))
 def get(x):
-    if x in cs: return cs[x]
-    return next((c for c in cs.values() if c["name"]==x),None)
+    named=next((c for c in cs.values() if c["name"]==x.lstrip("/")),None)
+    if named: return named
+    matches=[c for c in cs.values() if x and c["id"].startswith(x)]
+    return matches[0] if len(matches)==1 else None
 def fmt(t,c):
     if t=="{{.Id}}": return c["id"]
     if t=="{{.Config.Image}}": return c["image"]
@@ -374,13 +378,22 @@ def fmt(t,c):
     if t=="{{json .Mounts}}": return json.dumps(c["mounts"])
     if t=='{{index .Config.Labels "service"}}': return c["labels"].get("service","<no value>")
     if t=='{{index .Config.Labels "org.apexforge.version"}}': return c["labels"].get("org.apexforge.version","<no value>")
+    if t=='{{index .Config.Labels "org.apexforge.deployment"}}': return c["labels"].get("org.apexforge.deployment","<no value>")
     if t=="{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}": return c["health"]
     return ""
 if a[0]=="ps":
-    if "--quiet" in a:
-        print("\n".join(c["id"] for c in cs.values() if c["running"] and c["image"]=="cloudops-flask:1.1"))
+    selected=[c for c in cs.values() if c["running"] or "-a" in a or "--all" in a]
+    for i,arg in enumerate(a[:-1]):
+        if arg=="--filter":
+            key,value=a[i+1].split("=",1)
+            if key=="ancestor": selected=[c for c in selected if c["image"]==value]
+            elif key=="status": selected=[c for c in selected if c["running"]==(value=="running")]
+            else: sys.exit(2)
+    if "--quiet" in a or "-q" in a:
+        if os.getenv("TEST_PS_FAIL")=="true": sys.exit(1)
+        print("\n".join(c["id"] if "--no-trunc" in a else c["id"][:12] for c in selected))
     else:
-        for c in cs.values(): print(f'container name={c["name"]} image={c["image"]}')
+        for c in selected: print(f'container name={c["name"]} image={c["image"]}')
 elif a[0]=="inspect":
     target=a[-1]; c=get(target)
     if c is None: sys.exit(1)
@@ -398,20 +411,39 @@ elif a[0]=="pull": sys.exit(1) if os.getenv("TEST_ECR_PULL_FAIL")=="true" else N
 elif a[0]=="login": sys.stdin.read()
 elif a[0]=="run":
     name=a[a.index("--name")+1]; image=next(x for x in a if x.startswith("489502663059.dkr.ecr.") and "@sha256:" in x)
+    if get(name): sys.exit(125)
     labels={}
     for i,x in enumerate(a[:-1]):
         if x=="--label":
             k,v=a[i+1].split("=",1); labels[k]=v
-    state["next"]+=1; ident=f'new-{state["next"]}'
+    state["next"]+=1; ident=hashlib.sha256(f'new-{state["next"]}'.encode()).hexdigest()
     candidate="candidate" in name
-    c={"id":ident,"name":name,"image":image,"running":True,"network":"host","port_bindings":None,"labels":labels,"health":os.getenv("TEST_CANDIDATE_DOCKER_HEALTH" if candidate else "TEST_PRODUCTION_DOCKER_HEALTH","healthy"),"mounts":[]}
+    c={"id":ident,"name":name,"image":image,"running":True,"network":a[a.index("--network")+1],"port_bindings":None,"labels":labels,"health":os.getenv("TEST_CANDIDATE_DOCKER_HEALTH" if candidate else "TEST_PRODUCTION_DOCKER_HEALTH","healthy"),"mounts":[]}
+    if not candidate and os.getenv("TEST_PRODUCTION_NAME_RACE")=="true":
+        c["labels"].pop("org.apexforge.deployment",None)
+        cs[ident]=c; save(); sys.exit(125)
+    if not candidate and os.getenv("TEST_PRODUCTION_START_FAIL")=="true":
+        c["running"]=False
+        cs[ident]=c; save(); sys.exit(125)
     cs[ident]=c; save(); print(ident)
 elif a[0]=="stop":
-    c=get(a[-1]); c["running"]=False; save(); print(c["name"])
+    c=get(a[-1])
+    if c is None: sys.exit(1)
+    c["running"]=False
+    if c["name"].startswith("cloudops-candidate-") and os.getenv("TEST_PRIOR_CHANGE"):
+        cs["legacy-1"].update(json.loads(os.environ["TEST_PRIOR_CHANGE"]))
+    save(); print(a[-1])
 elif a[0]=="start":
-    c=get(a[-1]); c["running"]=True; save(); print(c["name"])
+    c=get(a[-1])
+    if c is None: sys.exit(1)
+    c["running"]=True
+    c["restarted"]=True
+    c["warmup_remaining"]=int(os.getenv("TEST_RESTORE_WARMUP_POLLS","0"))
+    save(); print(a[-1])
 elif a[0]=="rename":
-    c=get(a[-2]); c["name"]=a[-1]; save()
+    c=get(a[-2])
+    if c is None or get(a[-1]): sys.exit(1)
+    c["name"]=a[-1]; save()
 else: sys.exit(2)
 '''
     aws_stub = r'''#!/usr/bin/env python3
@@ -440,6 +472,12 @@ if u.port==5001:
 else:
     key="TEST_PRODUCTION_"+("READY" if u.path=="/ready" else "HTTP")
     status=os.getenv(key,"200") if prod else ("200" if legacy else "000")
+    old=next((c for c in cs if c["running"] and c["image"]=="cloudops-flask:1.1"),None)
+    if old and old.get("restarted"):
+        status=os.getenv("TEST_RESTORE_HTTP","200")
+        if old.get("warmup_remaining",0)>0:
+            status="000"; old["warmup_remaining"]-=1
+            json.dump(s,open(os.environ["DOCKER_STATE"],"w"))
 sys.stdout.write(status)
 '''
     for name, content in (("docker", docker_stub), ("aws", aws_stub), ("curl", curl_stub)):
@@ -464,6 +502,7 @@ sys.stdout.write(status)
     env.update({
         "PATH": f"{bin_dir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "DOCKER_STATE": str(state_path),
+        "DOCKER_CALLS": str(tmp_path / "docker-calls.jsonl"),
         "TEST_SECRET": secret,
         "CLOUDOPS_RUNTIME_ENV": str(runtime_env),
         "CLOUDOPS_DEPLOY_LOG": str(tmp_path / "deploy.log"),
@@ -471,6 +510,7 @@ sys.stdout.write(status)
         "CLOUDOPS_CANDIDATE_WAIT_SECONDS": "0",
         "CLOUDOPS_PRODUCTION_WAIT_SECONDS": "0",
         "CLOUDOPS_ALB_WAIT_SECONDS": "0",
+        "CLOUDOPS_RESTORE_WAIT_SECONDS": "0",
     })
     return {"env": env, "state": str(state_path), "image": image, "version": "a" * 40, "tmp": str(tmp_path)}
 
@@ -498,6 +538,120 @@ def configure_legacy_bridge(host: dict[str, str], port_bindings: dict[str, list[
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
+def test_docker_id_contract_and_observed_dualstack_cutover_failure(fake_canary_host) -> None:
+    configure_legacy_bridge(fake_canary_host, dual_stack=True)
+    env = fake_canary_host["env"]
+    def docker(*args):
+        return subprocess.check_output(["docker", *args], env=env, text=True).strip()
+    short_id = docker("ps", "-q")
+    full_id = docker("ps", "--quiet", "--no-trunc")
+    assert len(short_id) == 12
+    assert len(full_id) == 64
+    assert short_id == full_id[:12]
+    assert short_id != docker("inspect", "--format", "{{.Id}}", "cloudops-flask")
+    assert docker("inspect", "--format", "{{.Id}}", short_id) == full_id
+    # Real Docker accepts an unambiguous truncated ID for operations, too.
+    docker("stop", short_id)
+    docker("start", short_id)
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "port=5001 Docker-health=healthy /health=200 /ready=200" in result.stdout
+    assert "Canary cutover completed" in result.stdout
+    state = json.loads(Path(fake_canary_host["state"]).read_text())
+    previous = state["containers"]["legacy-1"]
+    assert previous["id"] == full_id
+    assert previous["network"] == "bridge"
+    assert previous["running"] is False
+    calls = [json.loads(line) for line in Path(env["DOCKER_CALLS"]).read_text().splitlines()]
+    cutover_stop = next(call for call in calls if call[:3] == ["stop", "--time", "20"])
+    assert cutover_stop[-1] == full_id
+
+
+def test_fake_docker_rejects_ambiguous_short_ids(fake_canary_host) -> None:
+    state_path = Path(fake_canary_host["state"])
+    state = json.loads(state_path.read_text())
+    original = state["containers"]["legacy-1"]
+    full_id = original["id"]
+    state["containers"]["collision"] = dict(original, id=full_id[:12] + "f" * 52, name="different-container")
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    ambiguous = subprocess.run(["docker", "inspect", full_id[:12]], env=fake_canary_host["env"], capture_output=True)
+    assert ambiguous.returncode != 0
+    exact = subprocess.check_output(["docker", "inspect", "--format", "{{.Id}}", full_id],
+                                    env=fake_canary_host["env"], text=True).strip()
+    assert exact == full_id
+
+
+@pytest.mark.parametrize("change", [
+    {"id": "f" * 64}, {"name": "unexpected-renamed-container"},
+    {"image": "unexpected:2"}, {"network": "unexpected-network"},
+    {"port_bindings": {"5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "6000"}]}},
+])
+def test_inventory_change_after_candidate_verification_refuses_cutover(fake_canary_host, change) -> None:
+    configure_legacy_bridge(fake_canary_host, dual_stack=True)
+    fake_canary_host["env"]["TEST_PRIOR_CHANGE"] = json.dumps(change)
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "prior container identity or configuration changed" in result.stdout
+    state = json.loads(Path(fake_canary_host["state"]).read_text())
+    assert state["containers"]["legacy-1"]["running"] is True
+    assert not any(c["name"] == "cloudops-app" for c in state["containers"].values())
+
+
+def test_docker_discovery_failure_does_not_become_empty_inventory(fake_canary_host) -> None:
+    fake_canary_host["env"]["TEST_PS_FAIL"] = "true"
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "legacy container discovery failed" in result.stdout
+    state = json.loads(Path(fake_canary_host["state"]).read_text())
+    assert len(state["containers"]) == 1
+    assert state["containers"]["legacy-1"]["running"] is True
+
+
+def test_created_but_not_started_production_container_can_be_rolled_back(fake_canary_host) -> None:
+    configure_legacy_bridge(fake_canary_host, dual_stack=True)
+    fake_canary_host["env"]["TEST_PRODUCTION_START_FAIL"] = "true"
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "Previous container restored" in result.stdout
+    old = json.loads(Path(fake_canary_host["state"]).read_text())["containers"]["legacy-1"]
+    assert old["id"] == hashlib.sha256(b"legacy-1").hexdigest()
+    assert old["running"] is True
+    assert old["network"] == "bridge"
+
+
+@pytest.mark.parametrize("recovers", [True, False])
+def test_rollback_waits_for_original_application_startup_with_bounded_failure(fake_canary_host, recovers) -> None:
+    configure_legacy_bridge(fake_canary_host, dual_stack=True)
+    env = fake_canary_host["env"]
+    env["TEST_PRODUCTION_READY"] = "503"
+    env["TEST_RESTORE_WARMUP_POLLS"] = "2"
+    env["CLOUDOPS_RESTORE_WAIT_SECONDS"] = "8" if recovers else "0"
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    if recovers:
+        assert "Previous container restored" in result.stdout
+    else:
+        assert "CRITICAL: previous container restarted" in result.stdout
+        assert "Previous container restored" not in result.stdout
+    previous = json.loads(Path(fake_canary_host["state"]).read_text())["containers"]["legacy-1"]
+    assert previous["id"] == hashlib.sha256(b"legacy-1").hexdigest()
+    assert previous["running"] is True
+    assert previous["name"] == "cloudops-flask"
+
+
+def test_production_name_race_does_not_adopt_unknown_container(fake_canary_host) -> None:
+    configure_legacy_bridge(fake_canary_host, dual_stack=True)
+    fake_canary_host["env"]["TEST_PRODUCTION_NAME_RACE"] = "true"
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "Refusing rollback mutation" in result.stdout
+    state = json.loads(Path(fake_canary_host["state"]).read_text())
+    unknown = next(c for c in state["containers"].values() if c["name"] == "cloudops-app")
+    assert unknown["running"] is True
+    assert "org.apexforge.deployment" not in unknown["labels"]
+    assert state["containers"]["legacy-1"]["name"].startswith("cloudops-rollback-")
+
+
 def test_canary_port_conflict_refuses_candidate_before_mutating_legacy(fake_canary_host: dict[str, str]) -> None:
     listener = socket.socket()
     listener.bind(("0.0.0.0", 5001))
@@ -511,6 +665,25 @@ def test_canary_port_conflict_refuses_candidate_before_mutating_legacy(fake_cana
     state = json.loads(Path(fake_canary_host["state"]).read_text())
     assert state["containers"]["legacy-1"]["running"] is True
     assert not any("candidate" in item["name"] for item in state["containers"].values())
+
+
+def test_candidate_port_probe_allows_time_wait_from_prior_stopped_candidate(fake_canary_host) -> None:
+    # A real listening socket is covered above. Here only a closed TCP connection remains.
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("0.0.0.0", 5001))
+        listener.listen()
+        with socket.create_connection(("127.0.0.1", 5001)) as client:
+            server, _ = listener.accept()
+            server.shutdown(socket.SHUT_WR)
+            server.close()
+            assert client.recv(1) == b""
+    with socket.socket() as old_probe:
+        with pytest.raises(OSError):
+            old_probe.bind(("0.0.0.0", 5001))
+    configure_legacy_bridge(fake_canary_host, dual_stack=True)
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_successful_canary_candidate_cutover_retains_previous_container(fake_canary_host: dict[str, str]) -> None:
@@ -548,10 +721,11 @@ def test_successful_bridge_legacy_canary_cutover_preserves_original_container_co
     assert candidate["running"] is False
 
 
+@pytest.mark.parametrize("dual_stack", [False, True])
 def test_bridge_legacy_candidate_failure_leaves_original_serving_port_5000(
-    fake_canary_host: dict[str, str],
+    fake_canary_host: dict[str, str], dual_stack: bool,
 ) -> None:
-    configure_legacy_bridge(fake_canary_host)
+    configure_legacy_bridge(fake_canary_host, dual_stack=dual_stack)
     fake_canary_host["env"]["TEST_CANDIDATE_DOCKER_HEALTH"] = "unhealthy"
     fake_canary_host["env"]["TEST_CANDIDATE_HTTP"] = "503"
     fake_canary_host["env"]["TEST_CANDIDATE_READY"] = "503"
@@ -621,7 +795,7 @@ def test_ambiguous_running_legacy_images_are_rejected_before_candidate(fake_cana
     state_path = Path(fake_canary_host["state"])
     state = json.loads(state_path.read_text())
     state["containers"]["legacy-2"] = {
-        "id": "legacy-2", "name": "unexpected-legacy-copy", "image": "cloudops-flask:1.1",
+        "id": hashlib.sha256(b"legacy-2").hexdigest(), "name": "unexpected-legacy-copy", "image": "cloudops-flask:1.1",
         "running": True, "network": "bridge", "port_bindings": {
             "5000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5000"}],
         }, "labels": {}, "health": "none", "mounts": [],
@@ -669,8 +843,8 @@ def test_effective_legacy_publications(
     script = (ROOT / "deploy/cloudops-deploy.sh").read_text()
     validator = script[script.index("validate_legacy_network() {"):script.index("if ((EUID != 0));")]
     result = subprocess.run(
-        ["bash", "-eu", "-c", validator + '\nvalidate_legacy_network bridge "$1" legacy-1',
-         "validator", json.dumps(bindings)],
+        ["bash", "-eu", "-c", validator + '\nvalidate_legacy_network bridge "$1" "$2"',
+         "validator", json.dumps(bindings), legacy["id"]],
         env=fake_canary_host["env"], capture_output=True, text=True, timeout=10,
     )
     assert (result.returncode == 0) == accepted, result.stdout + result.stderr
@@ -702,7 +876,7 @@ def test_successful_cutover_from_managed_previous_container(fake_canary_host: di
     state = json.loads(state_path.read_text())
     old_image = "489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal@sha256:" + "9" * 64
     state["containers"] = {"managed-1": {
-        "id": "managed-1", "name": "cloudops-app", "image": old_image, "running": True,
+        "id": hashlib.sha256(b"managed-1").hexdigest(), "name": "cloudops-app", "image": old_image, "running": True,
         "network": "host", "labels": {"service": "cloudops", "org.apexforge.version": "9" * 12},
         "health": "healthy", "mounts": [],
     }}
