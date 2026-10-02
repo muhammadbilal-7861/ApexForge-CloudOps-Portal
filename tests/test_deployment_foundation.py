@@ -12,6 +12,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -42,6 +43,125 @@ def test_deployment_is_opt_in_main_only_and_archives_reports() -> None:
     context = (ROOT / "deploy" / "assert-deploy-context.sh").read_text(encoding="utf-8")
     assert '[[ "$SCM_BRANCH" == main ]]' in context
     assert "origin/main^{commit}" in context
+
+
+def test_ecr_push_stage_uses_idempotent_immutable_publication_helper() -> None:
+    pipeline = (ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+    assert "python3 deploy/publish-ecr-image.py" in pipeline
+    helper = load_helper("publish-ecr-image")
+    assert "ImageNotFoundException" in helper.IMAGE_NOT_FOUND_PATTERN.pattern
+    assert "IMMUTABLE" in (ROOT / "deploy" / "publish-ecr-image.py").read_text(encoding="utf-8")
+
+
+class FakeEcrPublisher:
+    """Model only the Docker and AWS CLI calls used by the ECR publisher."""
+
+    digest = "sha256:" + "a" * 64
+    built_id = "sha256:" + "b" * 64
+
+    def __init__(self, *, tag_exists: bool = False, pulled_id: str | None = None,
+                 describe_error: str | None = None) -> None:
+        self.tag_exists = tag_exists
+        self.pulled_id = pulled_id or self.built_id
+        self.describe_error = describe_error
+        self.pushed = False
+        self.commands: list[list[str]] = []
+
+    def __call__(self, command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        stdout = ""
+        stderr = ""
+        returncode = 0
+        if command[0] == "git":
+            stdout = "main-commit\n"
+        elif command[:2] == ["docker", "run"]:
+            aws_args = command[command.index("public.ecr.aws/aws-cli/aws-cli:2.37.5") + 1:]
+            if aws_args[:2] == ["sts", "get-caller-identity"]:
+                stdout = ("arn:aws:sts::489502663059:assumed-role/DevSecOpsToolsRole/jenkins\n"
+                          if "Arn" in aws_args else "489502663059\n")
+            elif aws_args[:2] == ["ecr", "describe-repositories"]:
+                stdout = "IMMUTABLE\n"
+            elif aws_args[:2] == ["ecr", "get-login-password"]:
+                stdout = "test-ecr-password\n"
+            elif aws_args[:2] == ["ecr", "describe-images"]:
+                if self.describe_error:
+                    returncode = 1
+                    stderr = f"An error occurred ({self.describe_error}) when calling DescribeImages"
+                elif self.tag_exists or self.pushed:
+                    stdout = self.digest + "\n"
+                else:
+                    returncode = 1
+                    stderr = "An error occurred (ImageNotFoundException) when calling DescribeImages"
+            else:
+                returncode, stderr = 2, "unexpected AWS CLI call"
+        elif command[:3] == ["docker", "image", "inspect"]:
+            image = command[-1]
+            image_id = self.built_id if "@sha256:" not in image else self.pulled_id
+            stdout = f"{image_id}|linux/amd64\n"
+        elif command[:2] == ["docker", "push"]:
+            self.pushed = True
+        elif command[:2] not in (["docker", "login"], ["docker", "pull"]):
+            if command[:2] != ["docker", "tag"]:
+                returncode, stderr = 2, "unexpected Docker call"
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+
+@pytest.fixture
+def ecr_publisher_config() -> dict[str, str]:
+    return {
+        "AWS_REGION": "eu-north-1",
+        "AWS_ACCOUNT_ID": "489502663059",
+        "AWS_EXPECTED_ROLE": "DevSecOpsToolsRole",
+        "AWS_CLI_IMAGE": "public.ecr.aws/aws-cli/aws-cli:2.37.5",
+        "ECR_REGISTRY": "489502663059.dkr.ecr.eu-north-1.amazonaws.com",
+        "ECR_REPOSITORY": "apexforge-cloudops-portal",
+        "ECR_URI": "489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal",
+        "APP_IMAGE_REF": "apexforge-cloudops:build-123",
+        "GIT_COMMIT_SHORT": "0123456789ab",
+    }
+
+
+def test_ecr_publisher_pushes_new_commit_tag_and_verifies_published_digest(
+    ecr_publisher_config: dict[str, str],
+) -> None:
+    helper = load_helper("publish-ecr-image")
+    fake = FakeEcrPublisher()
+    digest = helper.publish(ecr_publisher_config, fake)
+    assert digest == fake.digest
+    assert fake.pushed is True
+    assert ["docker", "push", ecr_publisher_config["ECR_URI"] + ":0123456789ab"] in fake.commands
+    assert ["docker", "pull", "--platform", "linux/amd64",
+            ecr_publisher_config["ECR_URI"] + "@" + fake.digest] in fake.commands
+
+
+def test_ecr_publisher_reuses_existing_matching_commit_tag_without_push(
+    ecr_publisher_config: dict[str, str],
+) -> None:
+    helper = load_helper("publish-ecr-image")
+    fake = FakeEcrPublisher(tag_exists=True)
+    assert helper.publish(ecr_publisher_config, fake) == fake.digest
+    assert fake.pushed is False
+    assert not any(command[:2] == ["docker", "push"] for command in fake.commands)
+
+
+def test_ecr_publisher_rejects_existing_commit_tag_with_different_image(
+    ecr_publisher_config: dict[str, str],
+) -> None:
+    helper = load_helper("publish-ecr-image")
+    fake = FakeEcrPublisher(tag_exists=True, pulled_id="sha256:" + "c" * 64)
+    with pytest.raises(helper.PublishError, match="differs from the image built and scanned"):
+        helper.publish(ecr_publisher_config, fake)
+    assert fake.pushed is False
+
+
+def test_ecr_publisher_fails_closed_on_describe_images_authorization_error(
+    ecr_publisher_config: dict[str, str],
+) -> None:
+    helper = load_helper("publish-ecr-image")
+    fake = FakeEcrPublisher(describe_error="AccessDeniedException")
+    with pytest.raises(helper.PublishError, match="AccessDeniedException"):
+        helper.publish(ecr_publisher_config, fake)
+    assert fake.pushed is False
 
 
 def test_launch_template_override_preserves_tags_and_omits_user_data() -> None:
