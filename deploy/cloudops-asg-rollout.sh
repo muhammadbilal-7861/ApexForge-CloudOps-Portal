@@ -10,6 +10,7 @@ set +x
 : "${GIT_COMMIT_SHORT:?GIT_COMMIT_SHORT is required}"
 : "${GIT_COMMIT_FULL:?GIT_COMMIT_FULL is required}"
 : "${ASG_AMI_REVIEWED:?ASG_AMI_REVIEWED is required}"
+: "${ASG_VALIDATED_VERSION:?The exact preapproved candidate version is required}"
 
 [[ "$ASG_AMI_REVIEWED" == true ]] || { printf 'Review the pinned official Ubuntu 24.04 LTS provenance and launch-template preview before approving rollout.\n' >&2; exit 1; }
 bash deploy/assert-deploy-context.sh
@@ -55,15 +56,11 @@ chmod 700 "$work_dir"
 # collect-cloudops-preflight already rendered and validated these overrides.
 [[ -s "$overrides_file" && -s "$WORKSPACE/reports/asg-launch-template-preview.json" ]] || { printf 'Missing reviewed launch-template preview.\n' >&2; exit 1; }
 
-new_version="$(aws_cli ec2 create-launch-template-version \
-    --launch-template-id "$launch_template_id" \
-    --source-version 5 \
-    --version-description "CloudOps $GIT_COMMIT_SHORT" \
-    --launch-template-data "file://$overrides_file" \
-    --query 'LaunchTemplateVersion.VersionNumber' \
-    --output text)"
-[[ "$new_version" =~ ^[0-9]+$ ]] || { printf 'EC2 did not return an explicit numeric launch-template version.\n' >&2; exit 1; }
-printf 'Created launch-template version %s from immutable source version 5; prior ASG version is %s.\n' "$new_version" "$old_version"
+# Reuse the version bound to the preapproval record and release, never create
+# a replacement after input. collect-cloudops-preflight re-read and validated it.
+new_version="$ASG_VALIDATED_VERSION"
+[[ "$new_version" =~ ^[0-9]+$ && "$new_version" -gt 5 ]] || { printf 'Invalid approved candidate version.\n' >&2; exit 1; }
+printf 'Reusing approved clean launch-template version %s; prior ASG version is %s.\n' "$new_version" "$old_version"
 
 rollback_asg() {
     local reason="$1"

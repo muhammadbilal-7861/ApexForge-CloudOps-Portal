@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 from cloudops_ami import REVIEW, validate_ami, validate_source
+from cloudops_launch import validate_settings
 
 
 def preview(source: dict, ami: dict, parameter: dict, overrides: dict) -> dict:
@@ -37,8 +38,7 @@ def preview(source: dict, ami: dict, parameter: dict, overrides: dict) -> dict:
             raise ValueError("bootstrap safety control is missing")
     if not re.search(r'IMAGE_URI="489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}"', script):
         raise ValueError("bootstrap does not pin an approved ECR digest")
-    effective = dict(source["LaunchTemplateData"], **overrides)
-    validate_source(dict(effective, BlockDeviceMappings=None))
+    validate_settings(overrides)
     metadata = overrides.get("MetadataOptions", {})
     if metadata.get("HttpTokens") != "required" or metadata.get("HttpPutResponseHopLimit") != 1 or metadata.get("HttpEndpoint") != "enabled":
         raise ValueError("bootstrap metadata options must enforce IMDSv2")
@@ -47,6 +47,8 @@ def preview(source: dict, ami: dict, parameter: dict, overrides: dict) -> dict:
         raise ValueError("rendered network interface must be private and must not pin a subnet")
     return {
         "launchTemplateId": "lt-028eb222c6fcfffc1", "sourceVersion": 5,
+        "sourceVersionInherited": False, "instanceType": overrides["InstanceType"],
+        "availabilityZoneIndependent": True,
         "sourceImageRejected": REVIEW["rejected_image_id"], "newImageId": image["ImageId"],
         "imageOwnerId": image["OwnerId"], "imageName": image["Name"], "architecture": image["Architecture"],
         "operatingSystem": "Ubuntu Server 24.04 LTS", "rootVolumeType": "gp3",

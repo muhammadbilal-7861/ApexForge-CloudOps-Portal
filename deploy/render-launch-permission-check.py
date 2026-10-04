@@ -6,28 +6,24 @@ import argparse
 import json
 from pathlib import Path
 
-from cloudops_ami import REVIEW, validate_source
+from cloudops_ami import REVIEW
+from cloudops_launch import validate_settings
 
 
 def render(overrides: dict, version: str, subnet: str, propagated_tags: dict | None = None) -> dict:
-    if not version.isdigit() or subnet not in REVIEW["private_subnets"]:
+    if not version.isdigit() or int(version) <= 5 or subnet not in REVIEW["private_subnets"]:
         raise ValueError("permission check requires a numeric version and approved subnet")
     if overrides.get("ImageId") != REVIEW["image_id"]:
         raise ValueError("permission check requires the pinned reviewed Ubuntu image")
-    validate_source(dict(overrides, InstanceType="t3.micro"))
-    metadata = overrides.get("MetadataOptions", {})
-    if metadata.get("HttpTokens") != "required" or metadata.get("HttpPutResponseHopLimit") != 1:
-        raise ValueError("permission check must preserve IMDSv2")
-    interfaces = overrides.get("NetworkInterfaces", [])
-    if len(interfaces) != 1 or interfaces[0].get("SubnetId") or interfaces[0].get("AssociatePublicIpAddress") is not False:
-        raise ValueError("permission check requires the private subnet-free primary interface")
-    request = {key: overrides[key] for key in
-               ("ImageId", "IamInstanceProfile", "UserData", "TagSpecifications", "MetadataOptions")}
-    request.update(
-        DryRun=True, MinCount=1, MaxCount=1, InstanceType="t3.micro",
-        LaunchTemplate={"LaunchTemplateId": "lt-028eb222c6fcfffc1", "Version": version},
-        NetworkInterfaces=[dict(interfaces[0], SubnetId=subnet)],
-    )
+    validate_settings(overrides)
+    interfaces = overrides["NetworkInterfaces"]
+    # Probe the actual clean candidate. Do not override image/profile/metadata/
+    # user data: such overrides could hide defects in the approved AWS version.
+    request = {
+        "DryRun": True, "MinCount": 1, "MaxCount": 1,
+        "LaunchTemplate": {"LaunchTemplateId": "lt-028eb222c6fcfffc1", "Version": version},
+        "NetworkInterfaces": [dict(interfaces[0], SubnetId=subnet)],
+    }
     tags = REVIEW["asg_propagated_tags"] if propagated_tags is None else propagated_tags
     if tags != REVIEW["asg_propagated_tags"]:
         raise ValueError("ASG propagated tags differ from the reviewed configuration")

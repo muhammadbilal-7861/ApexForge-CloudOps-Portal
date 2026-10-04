@@ -59,11 +59,11 @@ else
     aws_cli ec2 describe-launch-template-versions \
         --launch-template-id lt-028eb222c6fcfffc1 \
         --versions "$launch_version" \
-        --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:LaunchTemplateData.{ImageId:ImageId,InstanceType:InstanceType,IamInstanceProfile:IamInstanceProfile,SecurityGroupIds:SecurityGroupIds,NetworkInterfaces:NetworkInterfaces,MetadataOptions:MetadataOptions,TagSpecifications:TagSpecifications,BlockDeviceMappings:BlockDeviceMappings}}' \
+        --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:LaunchTemplateData.{ImageId:ImageId,InstanceType:InstanceType,IamInstanceProfile:IamInstanceProfile,SecurityGroupIds:SecurityGroupIds,NetworkInterfaces:NetworkInterfaces,MetadataOptions:MetadataOptions,TagSpecifications:TagSpecifications,BlockDeviceMappings:BlockDeviceMappings,Placement:Placement}}' \
         --output json > "$work_dir/launch-template.json"
     # v5 is an immutable configuration source only; never reuse its AMI/UserData.
     aws_cli ec2 describe-launch-template-versions --launch-template-id lt-028eb222c6fcfffc1 --versions 5 \
-        --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:LaunchTemplateData.{ImageId:ImageId,InstanceType:InstanceType,IamInstanceProfile:IamInstanceProfile,SecurityGroupIds:SecurityGroupIds,NetworkInterfaces:NetworkInterfaces,MetadataOptions:MetadataOptions,TagSpecifications:TagSpecifications,BlockDeviceMappings:BlockDeviceMappings}}' \
+        --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:LaunchTemplateData.{ImageId:ImageId,InstanceType:InstanceType,IamInstanceProfile:IamInstanceProfile,SecurityGroupIds:SecurityGroupIds,NetworkInterfaces:NetworkInterfaces,MetadataOptions:MetadataOptions,TagSpecifications:TagSpecifications,BlockDeviceMappings:BlockDeviceMappings,Placement:Placement}}' \
         --output json > "$work_dir/launch-template-source.json"
     reviewed_ami="$(docker run --rm --volumes-from jenkins --workdir "$WORKSPACE" "$PYTHON_IMAGE" \
         python -c 'import json; print(json.load(open("deploy/reviewed-ubuntu24.json"))["image_id"])')"
@@ -95,6 +95,10 @@ if [[ "$mode" == canary ]]; then
     bash deploy/cloudops-ssm-deploy.sh preflight i-02777a62f2a65bc1e
 fi
 if [[ "$mode" == asg ]]; then
-    bash deploy/prepare-cloudops-asg.sh
-    bash deploy/validate-launch-permissions.sh 5
+    if [[ -n "${ASG_VALIDATED_VERSION:-}" ]]; then
+        # After approval, refresh discovery without creating another candidate.
+        bash deploy/validate-launch-permissions.sh "$ASG_VALIDATED_VERSION"
+    else
+        bash deploy/prepare-cloudops-asg.sh
+    fi
 fi

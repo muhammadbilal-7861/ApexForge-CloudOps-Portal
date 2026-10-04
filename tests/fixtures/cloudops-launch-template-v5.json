@@ -18,6 +18,9 @@
         ],
         "MetadataOptions": null,
         "TagSpecifications": null,
-        "BlockDeviceMappings": null
+        "BlockDeviceMappings": null,
+        "Placement": {
+            "AvailabilityZoneId": "eun1-az1"
+        }
     }
 }

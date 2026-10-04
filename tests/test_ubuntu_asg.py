@@ -24,18 +24,18 @@ def reviewed_overrides():
 @pytest.mark.parametrize("subnet", ["subnet-08469c4e69b5c4d65", "subnet-05788ba98ca1096e6"])
 def test_permission_request_preserves_reviewed_configuration_for_each_subnet(subnet):
     renderer = load_helper("render-launch-permission-check")
-    result = renderer.render(reviewed_overrides(), "5", subnet)
+    result = renderer.render(reviewed_overrides(), "6", subnet)
     assert result["DryRun"] is True
     assert result["MinCount"] == 1
     assert result["MaxCount"] == 1
-    assert result["ImageId"] == "ami-0769f265f707fecc8"
-    assert result["InstanceType"] == "t3.micro"
-    assert result["LaunchTemplate"]["Version"] == "5"
+    assert "ImageId" not in result
+    assert "InstanceType" not in result
+    assert result["LaunchTemplate"]["Version"] == "6"
     assert result["NetworkInterfaces"][0]["SubnetId"] == subnet
     assert result["NetworkInterfaces"][0]["Groups"] == ["sg-0f9613afd389c288d"]
     assert result["NetworkInterfaces"][0]["AssociatePublicIpAddress"] is False
-    assert result["MetadataOptions"]["HttpTokens"] == "required"
-    assert result["IamInstanceProfile"]["Arn"].endswith("instance-profile/CloudOpsEC2Role")
+    assert "MetadataOptions" not in result
+    assert "IamInstanceProfile" not in result
     tags = {tag["Key"]: tag["Value"] for item in result["TagSpecifications"] if item["ResourceType"] == "instance" for tag in item["Tags"]}
     assert tags["Role"] == "app"
     assert tags["Environment"] == "Interview-Lab"
@@ -49,7 +49,7 @@ def test_permission_renderer_rejects_unapproved_or_ambiguous_subnet(subnet):
     renderer = load_helper("render-launch-permission-check")
     overrides = reviewed_overrides()
     with pytest.raises(ValueError, match="approved subnet"):
-        renderer.render(overrides, "5", subnet)
+        renderer.render(overrides, "6", subnet)
 
 
 @pytest.mark.parametrize("tags", [{}, {"Role": "unexpected"}])
@@ -57,11 +57,11 @@ def test_permission_renderer_rejects_unreviewed_asg_tags(tags):
     renderer = load_helper("render-launch-permission-check")
     overrides = reviewed_overrides()
     with pytest.raises(ValueError, match="propagated tags"):
-        renderer.render(overrides, "5", "subnet-08469c4e69b5c4d65", tags)
+        renderer.render(overrides, "6", "subnet-08469c4e69b5c4d65", tags)
 
 
 @pytest.mark.parametrize("operation,code", [
-    ("none", "DryRunOperation"), ("none", "prefixed-success"), ("create-launch-template-version", "UnauthorizedOperation"),
+    ("none", "DryRunOperation"), ("none", "prefixed-success"), ("run-instances", "InvalidParameterValue"),
     ("run-instances", "UnauthorizedOperation"), ("run-instances", "AccessDenied"),
     ("run-instances", "RequestLimitExceeded"), ("run-instances", "unexpected-success"),
 ])
@@ -71,9 +71,10 @@ def test_permission_check_never_launches_and_fails_closed_on_api_errors(tmp_path
     deploy.mkdir(parents=True)
     work = workspace / ".deploy-work"
     work.mkdir()
-    for name in ("validate-launch-permissions.sh", "render-launch-permission-check.py", "cloudops_ami.py", "reviewed-ubuntu24.json"):
+    for name in ("validate-launch-permissions.sh", "render-launch-permission-check.py", "cloudops_ami.py", "cloudops_launch.py", "reviewed-ubuntu24.json"):
         shutil.copyfile(ROOT / "deploy" / name, deploy / name)
     (deploy / "assert-deploy-context.sh").write_text("#!/bin/bash\nexit 0\n")
+    (deploy / "verify-asg-candidate.sh").write_text("#!/bin/bash\nexit 0\n")
     (work / "launch-template-overrides.json").write_text(json.dumps(reviewed_overrides()))
     review = json.loads((deploy / "reviewed-ubuntu24.json").read_text())
     (work / "asg.json").write_text(json.dumps({"AutoScalingGroups": [{
@@ -108,15 +109,15 @@ sys.exit(255)
     for request in requests:
         assert "--dry-run" in request
         assert request[0] == "ec2"
-        assert request[1] in ("create-launch-template-version", "run-instances")
+        assert request[1] == "run-instances"
     assert "private-response" not in result.stdout + result.stderr
     report = workspace / "reports/asg-launch-permissions.json"
     if operation == "none":
         assert result.returncode == 0, result.stderr
-        assert len(requests) == 3
+        assert len(requests) == 2
         assert json.loads(report.read_text())["templateVersion"] == "6"
         subnets = []
-        for request in requests[1:]:
+        for request in requests:
             path = Path(request[request.index("--cli-input-json") + 1].removeprefix("file://"))
             document = json.loads(path.read_text())
             assert document["DryRun"] is True
