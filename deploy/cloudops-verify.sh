@@ -69,7 +69,7 @@ while :; do
             --target-group-arn "$target_group_arn" \
             --targets "Id=$instance_id,Port=5000" \
             --query 'TargetHealthDescriptions[0].TargetHealth.State' \
-            --output text)"
+            --output text)" || { printf 'ALB verification API failed; refusing to poll an unsuccessful request.\n' >&2; exit 1; }
         [[ "$target_state" == None ]] && target_state=not-registered
     fi
 

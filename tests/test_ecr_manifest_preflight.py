@@ -68,7 +68,12 @@ import json, os, sys
 a=sys.argv[1:]
 with open(os.environ["AWS_CALL_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(a) + "\n")
-if a[:2] == ["secretsmanager", "get-secret-value"]:
+if a[:2] == ["elbv2", "describe-target-health"]:
+    if os.getenv("TEST_ALB_FAILURE") == "true":
+        print("AccessDenied: DescribeTargetHealth", file=sys.stderr)
+        sys.exit(254)
+    print(json.dumps({"TargetHealthDescriptions": []}))
+elif a[:2] == ["secretsmanager", "get-secret-value"]:
     secret_name=a[a.index("--secret-id")+1]
     if secret_name == "cloudops/prod/flask-session-key": print(os.environ["TEST_SIGNING_SECRET"])
     else: print(json.dumps({"host":"db.local","username":"app","password":"db-secret","dbname":"cloudops","port":3306}))
@@ -107,7 +112,7 @@ else:
 
 
 def run_preflight(
-    harness: dict[str, object], responses: dict[str, object], image_digest: str, *, fail_ecr: bool = False
+    harness: dict[str, object], responses: dict[str, object], image_digest: str, *, fail_ecr: bool = False, fail_alb: bool = False
 ) -> subprocess.CompletedProcess[str]:
     tmp_path = harness["tmp"]
     assert isinstance(tmp_path, Path)
@@ -121,9 +126,22 @@ def run_preflight(
         "AWS_CALL_LOG": str(harness["aws_log"]),
         "ECR_RESPONSES": str(response_path),
         "TEST_ECR_FAILURE": "true" if fail_ecr else "false",
+        "TEST_ALB_FAILURE": "true" if fail_alb else "false",
     })
     image = f"489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal@{image_digest}"
-    return subprocess.run(["bash", str(PREFLIGHT), image], env=env, capture_output=True, text=True, timeout=20)
+    return subprocess.run(["bash", str(PREFLIGHT), image,
+                           "arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/abc"],
+                          env=env, capture_output=True, text=True, timeout=20)
+
+
+def test_preapproval_app_role_alb_denial_stops_at_first_api_call(preflight_harness) -> None:
+    raw, digest = image_manifest()
+    result = run_preflight(preflight_harness, {digest: api_image(digest, raw, OCI_MANIFEST)}, digest, fail_alb=True)
+    assert result.returncode != 0
+    assert "ALB permission check failed" in result.stderr
+    calls = aws_calls(preflight_harness)
+    assert len(calls) == 1
+    assert calls[0][:2] == ["elbv2", "describe-target-health"]
 
 
 def aws_calls(harness: dict[str, object]) -> list[list[str]]:

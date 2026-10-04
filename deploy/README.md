@@ -1,5 +1,7 @@
 # CloudOps EC2 deployment runbook
 
+For pinned build inputs, clean-build comparison, and reviewed security updates, see [Reproducible builds](REPRODUCIBLE-BUILDS.md). Canary preflight now checks `DescribeTargetHealth` through SSM using the application instance role before approval; deploy repeats the check before candidate creation. Apply the reviewed application-role IAM policy separately before opting into deployment.
+
 This is a repository-side, opt-in extension. It does not create networking, modify RDS, or deploy during normal CI. Jenkins uses the existing EC2 role and the ECR image digest produced by the successful CI build. Do not add AWS credentials to the job or repository.
 
 ## Targets and safety controls
