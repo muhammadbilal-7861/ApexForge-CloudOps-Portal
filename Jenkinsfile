@@ -431,6 +431,17 @@ pipeline {
                     if (params.DEPLOY_TARGET == 'asg') {
                         archiveArtifacts artifacts: 'reports/asg-launch-template-preview.json', fingerprint: true
                         archiveArtifacts artifacts: 'reports/asg-launch-permissions.json', fingerprint: true
+                        archiveArtifacts artifacts: 'reports/asg-launch-candidate.json', fingerprint: true
+                        env.ASG_VALIDATED_VERSION = sh(
+                            script: '''#!/bin/bash
+                                set -euo pipefail
+                                docker run --rm --volumes-from jenkins --workdir "$WORKSPACE" "$PYTHON_IMAGE" \\
+                                    python -c 'import json; print(json.load(open("reports/asg-launch-candidate.json"))["candidateVersion"])'
+                            ''', returnStdout: true
+                        ).trim()
+                        if (!env.ASG_VALIDATED_VERSION.matches('[0-9]+')) {
+                            error('Missing validated ASG candidate version.')
+                        }
                         echo "Review the launch-template preview before approval: ${env.BUILD_URL}artifact/reports/asg-launch-template-preview.json"
                     }
                 }
@@ -449,8 +460,8 @@ pipeline {
                 }
                 timeout(time: 15, unit: 'MINUTES') {
                     input(
-                        message: "Deploy ${env.GIT_COMMIT_SHORT} to ${params.DEPLOY_TARGET}? Read-only architecture and security preflight passed." +
-                            (params.DEPLOY_TARGET == 'asg' ? " Review ${env.BUILD_URL}artifact/reports/asg-launch-template-preview.json before approving." : ''),
+                        message: "Deploy ${env.GIT_COMMIT_SHORT} to ${params.DEPLOY_TARGET}? Architecture and security preflight passed." +
+                            (params.DEPLOY_TARGET == 'asg' ? " Candidate version ${env.ASG_VALIDATED_VERSION}, image ${env.ECR_DEPLOY_IMAGE}. Review ${env.BUILD_URL}artifact/reports/asg-launch-template-preview.json and asg-launch-candidate.json before approving." : ''),
                         ok: 'Approve deployment',
                         submitter: env.CLOUDOPS_DEPLOY_APPROVERS,
                         submitterParameter: 'DEPLOY_APPROVED_BY'

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render clean AMI/bootstrap/network overrides for the immutable source LT v5."""
+"""Inventory v5, then render a complete launch allowlist without inheritance."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import base64
 from pathlib import Path
 
 from cloudops_ami import REVIEW, validate_source
+from cloudops_launch import approved_settings, validate_settings
 
 
 VERSION_RE = re.compile(r"^[0-9a-f]{12,40}$")
@@ -27,30 +28,9 @@ def render(source_data: dict, user_data: str, version: str) -> dict:
         raise ValueError("invalid user-data encoding") from exc
     if not script.startswith("#!/usr/bin/env bash\n") or "@@" in script:
         raise ValueError("user-data must be a rendered bootstrap shell script")
-    tags_by_resource = {
-        item.get("ResourceType"): list(item.get("Tags", []))
-        for item in (source_data.get("TagSpecifications") or [])
-    }
-    instance_tags = {item.get("Key"): item for item in tags_by_resource.get("instance", [])}
-    for key, value in (("Role", "app"), ("Monitoring", "enabled"), ("Version", version)):
-        instance_tags[key] = {"Key": key, "Value": value}
-    tags_by_resource["instance"] = list(instance_tags.values())
-    tag_specs = [
-        {"ResourceType": resource_type, "Tags": tags}
-        for resource_type, tags in sorted(tags_by_resource.items())
-        if resource_type and tags
-    ]
-    overrides = {"ImageId": REVIEW["image_id"], "UserData": user_data, "TagSpecifications": tag_specs,
-                 "IamInstanceProfile": dict(source_data["IamInstanceProfile"])}
-    if source_data.get("NetworkInterfaces"):
-        overrides["NetworkInterfaces"] = [{"DeviceIndex": 0, "Groups": [REVIEW["application_security_group"]],
-                                           "AssociatePublicIpAddress": False, "DeleteOnTermination": True}]
-    else:
-        overrides["SecurityGroupIds"] = [REVIEW["application_security_group"]]
-    metadata = dict(source_data.get("MetadataOptions") or {})
-    metadata.update({"HttpEndpoint": "enabled", "HttpTokens": "required", "HttpPutResponseHopLimit": 1})
-    overrides["MetadataOptions"] = metadata
-    return overrides
+    settings = approved_settings(user_data, version)
+    validate_settings(settings)
+    return settings
 
 
 def main() -> None:

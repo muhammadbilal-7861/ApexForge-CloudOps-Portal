@@ -190,6 +190,8 @@ def validate_common(directory: Path, mode: str) -> tuple[str, list[str]]:
                  {"HttpTokens": "required", "HttpEndpoint": "enabled", "HttpPutResponseHopLimit": 1}.items()):
             raise PreflightError("running clean ASG template must require IMDSv2")
         if data.get("ImageId") == EXPECTED["ami_id"]:
+            if data.get("Placement") or data.get("SubnetId"):
+                raise PreflightError("clean ASG template must not restrict Availability Zone or subnet")
             for interface in (data.get("NetworkInterfaces") or []):
                 if interface.get("SubnetId") or interface.get("AssociatePublicIpAddress") is not False:
                     raise PreflightError("clean ASG template must leave subnet selection to the ASG and disable public IPs")

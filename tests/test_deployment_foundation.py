@@ -185,7 +185,7 @@ def test_ecr_publisher_fails_closed_on_describe_images_authorization_error(
     assert fake.pushed is False
 
 
-def test_launch_template_override_preserves_tags_and_omits_user_data() -> None:
+def test_launch_template_allowlist_discards_unreviewed_source_tags() -> None:
     helper = load_helper("render-launch-template-data")
     source = {
         "VersionNumber": 5,
@@ -204,9 +204,9 @@ def test_launch_template_override_preserves_tags_and_omits_user_data() -> None:
     assert output["UserData"] == encoded
     assert "UserData" not in source["LaunchTemplateData"]
     tags = {entry["ResourceType"]: entry["Tags"] for entry in output["TagSpecifications"]}
-    assert {tag["Key"]: tag["Value"] for tag in tags["instance"]}["Owner"] == "cloudops"
+    assert "Owner" not in {tag["Key"] for tag in tags["instance"]}
     assert {tag["Key"]: tag["Value"] for tag in tags["instance"]}["Version"] == "a" * 40
-    assert tags["volume"] == [{"Key": "Data", "Value": "keep"}]
+    assert "volume" not in tags
     assert output["MetadataOptions"]["HttpTokens"] == "required"
 
 

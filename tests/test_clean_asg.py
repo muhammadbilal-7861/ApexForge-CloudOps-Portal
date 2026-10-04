@@ -99,6 +99,7 @@ def test_asg_preflight_accepts_clean_arn_profile_and_asg_subnet_selection(tmp_pa
     path.write_text(json.dumps(document))
     template = read_fixture("cloudops-launch-template-v5.json")
     template["VersionNumber"] = 6
+    template["LaunchTemplateData"].pop("Placement")
     template["LaunchTemplateData"].update(
         ImageId="ami-0769f265f707fecc8", MetadataOptions={"HttpTokens": "required", "HttpEndpoint": "enabled", "HttpPutResponseHopLimit": 1},
         NetworkInterfaces=[{"DeviceIndex": 0, "Groups": ["sg-0f9613afd389c288d"], "AssociatePublicIpAddress": False}])
@@ -120,7 +121,7 @@ def test_launch_renderer_supports_exact_profile_name_or_arn(profile):
     source = read_fixture("cloudops-launch-template-v5.json")["LaunchTemplateData"]
     source["IamInstanceProfile"] = profile
     output = load_helper("render-launch-template-data").render(source, base64.b64encode(rendered_bootstrap().encode()).decode(), COMMIT[:12])
-    assert output["IamInstanceProfile"] == profile
+    assert output["IamInstanceProfile"] == {"Arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"}
 
 
 @pytest.mark.parametrize("change", [
@@ -207,7 +208,7 @@ def test_per_instance_verification_requires_matching_bootstrap_marker(fake_canar
 
 @pytest.mark.parametrize("failure", [None, "one-unhealthy", "authorization", "instance-verification",
                                      "initial-denied", "initial-partial", "new-version-denied"])
-def test_asg_rollout_uses_v5_source_counts_only_its_instances_and_rolls_back(tmp_path, failure):
+def test_asg_rollout_reuses_approved_candidate_counts_only_its_instances_and_rolls_back(tmp_path, failure):
     if os.name != "posix":
         pytest.skip("shell orchestration requires Linux")
     workspace = tmp_path / "workspace"
@@ -266,12 +267,11 @@ else: sys.exit(2)
     state_path.write_text(json.dumps(["0", "0", "0", "5"]))
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", WORKSPACE=str(workspace), AWS_CLI_IMAGE="mock-aws",
                PYTHON_IMAGE="unused-python", AWS_REGION="eu-north-1", ECR_DEPLOY_IMAGE=IMAGE,
-               GIT_COMMIT_SHORT=COMMIT[:12], GIT_COMMIT_FULL=COMMIT, ASG_AMI_REVIEWED="true",
+               GIT_COMMIT_SHORT=COMMIT[:12], GIT_COMMIT_FULL=COMMIT, ASG_AMI_REVIEWED="true", ASG_VALIDATED_VERSION="6",
                AWS_TEST_CALLS=str(call_log), ASG_TEST_STATE=str(state_path), TEST_ROLLOUT_FAILURE=failure or "none")
     result = subprocess.run(["bash", str(script)], cwd=workspace, env=env, capture_output=True, text=True, timeout=10)
     calls = [json.loads(line) for line in call_log.read_text().splitlines()]
-    creation = next(call for call in calls if call[:2] == ["ec2", "create-launch-template-version"])
-    assert creation[creation.index("--source-version") + 1] == "5"
+    assert not any(call[:2] == ["ec2", "create-launch-template-version"] for call in calls)
     updates = [call for call in calls if call[:2] == ["autoscaling", "update-auto-scaling-group"]]
     if failure:
         assert result.returncode != 0
