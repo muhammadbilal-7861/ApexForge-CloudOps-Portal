@@ -57,6 +57,7 @@ def preview(source: dict, ami: dict, parameter: dict, overrides: dict) -> dict:
         "ssmParameter": REVIEW["ssm_parameter"], "ssmParameterVersion": REVIEW["ssm_parameter_version"],
         "instanceProfile": overrides["IamInstanceProfile"], "networkInterfaces": interfaces,
         "metadataOptions": metadata, "capacityChanged": False,
+        "initialCapacity": {"min": 1, "desired": 1, "max": 1}, "canaryRetired": False,
         "previewOnly": True,
         "applicationImage": re.search(r'IMAGE_URI="([^"]+)"', script).group(1),
         "userDataValidation": {"bashSyntax": "passed", "sha256": hashlib.sha256(body).hexdigest(),

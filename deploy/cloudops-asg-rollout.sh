@@ -112,15 +112,18 @@ rollback_asg() {
 bash deploy/validate-launch-permissions.sh "$new_version"
 
 if ((old_min == 0 && old_desired == 0 && old_max == 0)); then
-    # Initial capacity is raised only after source, IAM, RDS, target wiring, subnet, AMI-review, and SG preflights plus manual approval.
+    # With the healthy canary retained, the reviewed 8-vCPU regional budget
+    # allows one additional t3.micro (2 vCPUs). Never retire the canary here.
+    # Raise initial capacity only after security preflight and manual approval.
     if ! aws_cli autoscaling update-auto-scaling-group \
         --auto-scaling-group-name "$asg_name" \
         --launch-template "LaunchTemplateId=$launch_template_id,Version=$new_version" \
-        --min-size 1 --desired-capacity 2 --max-size 2; then
+        --min-size 1 --desired-capacity 1 --max-size 1; then
         rollback_asg 'initial capacity update failed' || true
         exit 1
     fi
-    expected_targets=2
+    expected_targets=1
+    target_min=1 target_desired=1 target_max=1
 else
     ((old_desired > 0)) || { printf 'Only the initial ASG state 0/0/0 or an already-running group can be deployed.\n' >&2; exit 1; }
     desired_file="$work_dir/desired-configuration.json"
@@ -159,6 +162,7 @@ else
         sleep 15
     done
     expected_targets="$old_desired"
+    target_min="$old_min" target_desired="$old_desired" target_max="$old_max"
 fi
 
 target_deadline=$((SECONDS + 1800))
@@ -191,8 +195,9 @@ if ! CLOUDOPS_REQUIRE_BOOTSTRAP_COMPLETE=true bash deploy/cloudops-ssm-deploy.sh
 fi
 
 mkdir -p "$WORKSPACE/reports"
-printf '{"target":"asg","launchTemplateId":"%s","launchTemplateVersion":"%s","image":"%s","healthyTargets":%s,"instances":[' \
-    "$launch_template_id" "$new_version" "$ECR_DEPLOY_IMAGE" "$healthy_count" > "$WORKSPACE/reports/deployment-evidence.json"
+printf '{"target":"asg","launchTemplateId":"%s","launchTemplateVersion":"%s","image":"%s","expectedTargets":%s,"healthyTargets":%s,"capacity":{"min":%s,"desired":%s,"max":%s},"perInstanceVerification":"passed","canaryRetired":false,"instances":[' \
+    "$launch_template_id" "$new_version" "$ECR_DEPLOY_IMAGE" "$expected_targets" "$healthy_count" \
+    "$target_min" "$target_desired" "$target_max" > "$WORKSPACE/reports/deployment-evidence.json"
 separator=""
 for instance_id in "${in_service_ids[@]}"; do
     printf '%s"%s"' "$separator" "$instance_id" >> "$WORKSPACE/reports/deployment-evidence.json"

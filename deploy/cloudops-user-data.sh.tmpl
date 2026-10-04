@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 set +x
+umask 077
 exec >> /var/log/cloudops-bootstrap.log 2>&1
+chmod 0600 /var/log/cloudops-bootstrap.log
+bootstrap_stage=initializing
+bootstrap_error_line=0
+tmp_dir=""
 bootstrap_failed() {
     local status="$1" line="$2" name actual_image actual_version
-    trap - ERR
+    trap - ERR EXIT
     set +e
     # Leave inbound port 5000 gated. Stop only containers from this exact release;
     # unknown workloads/volumes are retained for inspection and are never deleted.
@@ -19,11 +24,65 @@ bootstrap_failed() {
         done
     fi
     rm -f /var/lib/cloudops/bootstrap-complete.json
-    printf 'cloudops bootstrap failed: exit=%s line=%s; inbound app traffic remains blocked\n' "$status" "$line"
+    bootstrap_event failed "$status" "$line"
+    if ! publish_bootstrap_failure "$status" "$line"; then
+        printf 'Bootstrap status upload unavailable; inspect EC2 console and the private bootstrap log.\n'
+    fi
+}
+bootstrap_event() {
+    local message="cloudops bootstrap status=$1 stage=$bootstrap_stage exit=${2:-0} line=${3:-0}"
+    printf '%s\n' "$message"
+    # Only controlled stage/status/exit/line fields reach the EC2 console.
+    # Never print BASH_COMMAND, environment values, secrets or container dumps.
+    { printf '%s\n' "$message" > /dev/console; } 2>/dev/null || true
+}
+publish_bootstrap_failure() {
+    # Best-effort fallback when the agent has not started or is broken. Existing
+    # app-role log-stream permissions suffice; no log group is created.
+    command -v aws >/dev/null && command -v python3 >/dev/null || return 1
+    local token instance_id stream event_file error_file status=0 code
+    token="$(curl --fail --silent --noproxy '*' --connect-timeout 1 --max-time 2 \
+        --request PUT --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+        http://169.254.169.254/latest/api/token)" || return 1
+    instance_id="$(curl --fail --silent --noproxy '*' --connect-timeout 1 --max-time 2 \
+        --header "X-aws-ec2-metadata-token: $token" \
+        http://169.254.169.254/latest/meta-data/instance-id)" || return 1
+    [[ "$instance_id" =~ ^i-[0-9a-f]{8,17}$ ]] || return 1
+    stream="$instance_id/bootstrap-status"
+    event_file="$(mktemp /run/cloudops-bootstrap-status.XXXXXX)" || return 1
+    error_file="$event_file.error"
+    python3 - "$bootstrap_stage" "$1" "$2" > "$event_file" <<'PY'
+import json, sys, time
+message = f"cloudops bootstrap status=failed stage={sys.argv[1]} exit={sys.argv[2]} line={sys.argv[3]}"
+json.dump([{"timestamp": int(time.time() * 1000), "message": message}], sys.stdout)
+PY
+    AWS_MAX_ATTEMPTS=1 aws logs create-log-stream --region "$AWS_REGION" \
+        --log-group-name "$LOG_GROUP" --log-stream-name "$stream" \
+        --cli-connect-timeout 2 --cli-read-timeout 3 > /dev/null 2> "$error_file" || status=$?
+    code="$(sed -n 's/^.*An error occurred (\([A-Za-z0-9]*\)) when calling .*$/\1/p' "$error_file")"
+    if ((status != 0)) && [[ "$code" != ResourceAlreadyExistsException ]]; then
+        rm -f "$event_file" "$error_file"
+        return 1
+    fi
+    status=0
+    AWS_MAX_ATTEMPTS=1 aws logs put-log-events --region "$AWS_REGION" \
+        --log-group-name "$LOG_GROUP" --log-stream-name "$stream" --log-events "file://$event_file" \
+        --cli-connect-timeout 2 --cli-read-timeout 3 > /dev/null 2> "$error_file" || status=$?
+    rm -f "$event_file" "$error_file"
+    return "$status"
+}
+bootstrap_exit() {
+    local status="$1" line="$2"
+    trap - ERR EXIT
+    set +e
+    if ((status != 0)); then bootstrap_failed "$status" "$((bootstrap_error_line > 0 ? bootstrap_error_line : line))"; fi
+    if [[ -n "$tmp_dir" ]]; then rm -rf -- "$tmp_dir"; fi
     exit "$status"
 }
-trap 'bootstrap_failed "$?" "$LINENO"' ERR
-umask 077
+# EXIT covers explicit exits too (for example a rejected signing secret). ERR
+# records the failing line without recording a potentially secret command.
+trap 'bootstrap_error_line=$LINENO' ERR
+trap 'bootstrap_exit "$?" "$LINENO"' EXIT
 
 readonly AWS_REGION="@@AWS_REGION@@"
 readonly IMAGE_URI="@@IMAGE_URI@@"
@@ -39,6 +98,7 @@ readonly VERIFY_SCRIPT_SHA256="@@VERIFY_SCRIPT_SHA256@@"
 [[ "$IMAGE_URI" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]
 [[ "$APP_VERSION" =~ ^[0-9a-f]{12,40}$ ]]
 [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+bootstrap_event running
 # This bootstrap is reviewed exclusively for official Ubuntu Server 24.04 AMD64.
 # shellcheck disable=SC1091
 source /etc/os-release
@@ -46,22 +106,54 @@ source /etc/os-release
 
 # Ubuntu packages are authenticated by apt. AWS binary hashes below were
 # reviewed against upstream signatures; changing them requires a new review.
+bootstrap_stage=ubuntu_packages
+bootstrap_event running
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends docker.io python3 curl ca-certificates nftables unzip snapd
 rm -rf /var/lib/apt/lists/*
 tmp_dir="$(mktemp -d /run/cloudops-bootstrap.XXXXXX)"
-trap 'rm -rf -- "$tmp_dir"' EXIT
+bootstrap_stage=aws_cli
+bootstrap_event running
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
     https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.37.5.zip -o "$tmp_dir/awscliv2.zip"
 printf '%s  %s\n' 850ba65f1342a1f725f4868de3c4621ea729af31dac96e54b574cbb0ef309029 "$tmp_dir/awscliv2.zip" | sha256sum --check --status
 unzip -q "$tmp_dir/awscliv2.zip" -d "$tmp_dir"
 "$tmp_dir/aws/install" --install-dir /usr/local/aws-cli --bin-dir /usr/local/bin
 aws --version 2>&1 | grep -F 'aws-cli/2.37.5 ' >/dev/null
+bootstrap_stage=cloudwatch_install
+bootstrap_event running
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
     https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/1.300073.2b1889/amazon-cloudwatch-agent.deb -o "$tmp_dir/amazon-cloudwatch-agent.deb"
 printf '%s  %s\n' f25c81f42627ac481b51215e8e6f989208ab266f8b224ffd66a208061e790f1c "$tmp_dir/amazon-cloudwatch-agent.deb" | sha256sum --check --status
 dpkg -i "$tmp_dir/amazon-cloudwatch-agent.deb"
+bootstrap_stage=cloudwatch_agent
+bootstrap_event running
+cat > /etc/cloudwatch-agent-cloudops.json <<'JSON'
+{
+  "logs": {
+    "force_flush_interval": 1,
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {"file_path": "/var/log/cloudops-bootstrap.log", "log_group_name": "/cloudops/app", "log_stream_name": "{instance_id}/bootstrap"},
+          {"file_path": "/var/log/cloudops-deploy.log", "log_group_name": "/cloudops/app", "log_stream_name": "{instance_id}/deploy"}
+        ]
+      }
+    }
+  }
+}
+JSON
+chmod 0600 /etc/cloudwatch-agent-cloudops.json
+aws logs describe-log-groups --region "$AWS_REGION" --log-group-name-prefix "$LOG_GROUP" --query "logGroups[?logGroupName=='${LOG_GROUP}'].logGroupName | [0]" --output text | grep -Fx "$LOG_GROUP" >/dev/null
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+    -a fetch-config -m ec2 -c file:/etc/cloudwatch-agent-cloudops.json -s
+systemctl enable amazon-cloudwatch-agent
+systemctl is-active --quiet amazon-cloudwatch-agent
+
+
+bootstrap_stage=ssm_agent
+bootstrap_event running
 # Official Ubuntu AMIs use Snap SSM. Refuse a competing deb agent.
 if dpkg-query -W -f='${Status}' amazon-ssm-agent 2>/dev/null | grep -Fx 'install ok installed' >/dev/null; then
     printf 'Competing deb SSM Agent detected; refusing ambiguous agent setup.\n' >&2
@@ -76,18 +168,24 @@ snap start --enable amazon-ssm-agent
 systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
 systemctl is-active --quiet snap.amazon-ssm-agent.amazon-ssm-agent.service
 
+bootstrap_stage=network_gate
+bootstrap_event running
 # Gate both IPv4 and IPv6 ALB traffic until the exact new application passes.
 # Loopback stays available for local readiness verification. A pre-existing table
 # causes a failure rather than clearing an unknown firewall configuration.
 nft add table inet cloudops_bootstrap
 nft 'add chain inet cloudops_bootstrap input { type filter hook input priority -10; policy accept; }'
 nft 'add rule inet cloudops_bootstrap input iifname != "lo" tcp dport 5000 reject'
+bootstrap_stage=docker_and_clean_host
+bootstrap_event running
 systemctl enable --now docker
 systemctl is-active --quiet docker
 containers="$(docker ps --all --quiet --no-trunc)"
 [[ -z "$containers" ]] || { printf 'Clean first boot found existing containers; refusing reuse.\n' >&2; false; }
 [[ ! -e /etc/cloudops/runtime.env ]] || { printf 'Clean first boot found inherited runtime configuration; refusing reuse.\n' >&2; false; }
 
+bootstrap_stage=runtime_secrets
+bootstrap_event running
 install -d -o root -g root -m 0750 /etc/cloudops /usr/local/sbin
 aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$DB_SECRET_NAME" --query SecretString --output text |
     python3 -c 'import json,sys; d=json.load(sys.stdin); assert isinstance(d.get("host"),str) and isinstance(d.get("username"),str) and isinstance(d.get("password"),str) and isinstance(d.get("dbname",d.get("database")),str) and 0 < int(d.get("port",3306)) < 65536; print("Database secret schema validated.")'
@@ -116,34 +214,20 @@ fi
 runtime_owner_mode="$(stat -c '%U:%G:%a' /etc/cloudops/runtime.env)"
 [[ "$runtime_owner_mode" == root:root:600 ]]
 
-cat > /etc/cloudwatch-agent-cloudops.json <<'JSON'
-{
-  "logs": {
-    "logs_collected": {
-      "files": {
-        "collect_list": [
-          {"file_path": "/var/log/cloudops-bootstrap.log", "log_group_name": "/cloudops/app", "log_stream_name": "{instance_id}/bootstrap"},
-          {"file_path": "/var/log/cloudops-deploy.log", "log_group_name": "/cloudops/app", "log_stream_name": "{instance_id}/deploy"}
-        ]
-      }
-    }
-  }
-}
-JSON
-chmod 0600 /etc/cloudwatch-agent-cloudops.json
-aws logs describe-log-groups --region "$AWS_REGION" --log-group-name-prefix "$LOG_GROUP" --query "logGroups[?logGroupName=='${LOG_GROUP}'].logGroupName | [0]" --output text | grep -Fx "$LOG_GROUP" >/dev/null
-/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
-    -a fetch-config -m ec2 -c file:/etc/cloudwatch-agent-cloudops.json -s
-systemctl enable amazon-cloudwatch-agent
-systemctl is-active --quiet amazon-cloudwatch-agent
 
+bootstrap_stage=release_scripts
+bootstrap_event running
 curl --fail --silent --show-error --location "$RAW_BASE/cloudops-deploy.sh" -o "$tmp_dir/cloudops-deploy.sh"
 curl --fail --silent --show-error --location "$RAW_BASE/cloudops-verify.sh" -o "$tmp_dir/cloudops-verify.sh"
 printf '%s  %s\n' "$DEPLOY_SCRIPT_SHA256" "$tmp_dir/cloudops-deploy.sh" | sha256sum --check --status
 printf '%s  %s\n' "$VERIFY_SCRIPT_SHA256" "$tmp_dir/cloudops-verify.sh" | sha256sum --check --status
 install -o root -g root -m 0750 "$tmp_dir/cloudops-deploy.sh" /usr/local/sbin/cloudops-deploy.sh
 install -o root -g root -m 0750 "$tmp_dir/cloudops-verify.sh" /usr/local/sbin/cloudops-verify.sh
+bootstrap_stage=candidate_and_production
+bootstrap_event running
 CLOUDOPS_FIRST_BOOT=true /usr/local/sbin/cloudops-deploy.sh "$IMAGE_URI" "$APP_VERSION"
+bootstrap_stage=first_boot_verification
+bootstrap_event running
 /usr/local/sbin/cloudops-verify.sh --expected-image "$IMAGE_URI" --expected-version "$APP_VERSION" \
     --require-container-health --wait-seconds 180
 install -d -o root -g root -m 0750 /var/lib/cloudops
@@ -156,5 +240,9 @@ os.chmod(path, 0o600)
 PY
 # If removing this private gate fails, ERR stops the new application and removes
 # its success marker. ASG target registration is automatic; bootstrap never registers a target.
+bootstrap_stage=release_network_gate
+bootstrap_event running
 nft delete table inet cloudops_bootstrap
+bootstrap_stage=completed
+bootstrap_event succeeded
 printf 'CloudOps bootstrap completed for version %s.\n' "$APP_VERSION"
