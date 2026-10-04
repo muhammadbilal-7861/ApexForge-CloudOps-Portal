@@ -101,6 +101,9 @@ render_args=(
 if [[ "$mode" == verify || "$mode" == deploy ]]; then
     render_args+=(--require-target-healthy)
 fi
+if [[ "${CLOUDOPS_REQUIRE_BOOTSTRAP_COMPLETE:-false}" == true ]]; then
+    render_args+=(--require-bootstrap-complete)
+fi
 docker run --rm \
     --volumes-from jenkins \
     --user "$(id -u):$(id -g)" \

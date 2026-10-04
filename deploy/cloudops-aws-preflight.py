@@ -8,6 +8,8 @@ import json
 import sys
 from pathlib import Path
 
+from cloudops_ami import REVIEW, validate_ami, validate_source
+
 
 EXPECTED = {
     "region": "eu-north-1",
@@ -20,7 +22,7 @@ EXPECTED = {
     "target_group_path": "/ready",
     "asg_name": "asg-cloudops-app",
     "launch_template_id": "lt-028eb222c6fcfffc1",
-    "ami_id": "ami-09b67ca726bea7328",
+    "ami_id": REVIEW["image_id"],
     "canary_instance_id": "i-02777a62f2a65bc1e",
     "observability_instance_id": "i-0c550edbaa5ecbdff",
     "instance_profile": "CloudOpsEC2Role",
@@ -152,6 +154,8 @@ def validate_common(directory: Path, mode: str) -> tuple[str, list[str]]:
         asg = one(read_json(directory, "asg.json").get("AutoScalingGroups", []), "Auto Scaling group")
         if asg.get("AutoScalingGroupName") != EXPECTED["asg_name"]:
             raise PreflightError("unexpected Auto Scaling group")
+        if asg.get("HealthCheckType") != "ELB":
+            raise PreflightError("ASG must use ELB health checks for readiness gating")
         subnet_ids = set((asg.get("VPCZoneIdentifier") or "").split(","))
         if subnet_ids != EXPECTED["app_subnets"]:
             raise PreflightError("ASG subnets differ from the two approved private subnets")
@@ -167,16 +171,33 @@ def validate_common(directory: Path, mode: str) -> tuple[str, list[str]]:
         data = template.get("LaunchTemplateData", {})
         if str(template.get("VersionNumber")) != version:
             raise PreflightError("launch-template snapshot is not the version currently used by the ASG")
-        if data.get("ImageId") != EXPECTED["ami_id"] or data.get("InstanceType") != "t3.micro":
-            raise PreflightError("ASG AMI or instance type differs from the reviewed architecture")
-        if data.get("IamInstanceProfile", {}).get("Name") != EXPECTED["instance_profile"]:
-            raise PreflightError("launch template does not use CloudOpsEC2Role")
-        app_sgs = set(data.get("SecurityGroupIds", []))
-        for interface in data.get("NetworkInterfaces", []):
+        try:
+            validate_ami(read_json(directory, "reviewed-ami.json"), read_json(directory, "reviewed-ami-parameter.json"))
+            validate_source(data)
+            source = read_json(directory, "launch-template-source.json")
+            if source.get("VersionNumber") != 5 or source.get("LaunchTemplateData", {}).get("ImageId") != REVIEW["rejected_image_id"]:
+                raise ValueError("source must be inventoried immutable version 5; its image is never reused")
+            validate_source(source["LaunchTemplateData"])
+        except ValueError as exc:
+            raise PreflightError(str(exc)) from exc
+        capacities = (asg.get("MinSize"), asg.get("DesiredCapacity"), asg.get("MaxSize"))
+        if data.get("ImageId") == REVIEW["rejected_image_id"]:
+            if version != "5" or capacities != (0, 0, 0):
+                raise PreflightError("contaminated source AMI is allowed only as an idle 0/0/0 source; never launch or roll back into it")
+        elif data.get("ImageId") != EXPECTED["ami_id"]:
+            raise PreflightError("ASG does not use the reviewed clean AMI")
+        elif any((data.get("MetadataOptions") or {}).get(key) != value for key, value in
+                 {"HttpTokens": "required", "HttpEndpoint": "enabled", "HttpPutResponseHopLimit": 1}.items()):
+            raise PreflightError("running clean ASG template must require IMDSv2")
+        if data.get("ImageId") == EXPECTED["ami_id"]:
+            for interface in (data.get("NetworkInterfaces") or []):
+                if interface.get("SubnetId") or interface.get("AssociatePublicIpAddress") is not False:
+                    raise PreflightError("clean ASG template must leave subnet selection to the ASG and disable public IPs")
+        app_sgs = set(data.get("SecurityGroupIds") or [])
+        for interface in (data.get("NetworkInterfaces") or []):
             app_sgs.update(interface.get("Groups", []))
         if not app_sgs:
             raise PreflightError("launch template has no identifiable application security group")
-        capacities = (asg.get("MinSize"), asg.get("DesiredCapacity"), asg.get("MaxSize"))
         if capacities not in ((0, 0, 0),) and not (0 <= capacities[0] <= capacities[1] <= capacities[2]):
             raise PreflightError("ASG capacity values are inconsistent")
 

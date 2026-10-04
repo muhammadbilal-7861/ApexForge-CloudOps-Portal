@@ -1,0 +1,23 @@
+{
+    "VersionNumber": 5,
+    "LaunchTemplateData": {
+        "ImageId": "ami-09b67ca726bea7328",
+        "InstanceType": "t3.micro",
+        "IamInstanceProfile": {
+            "Arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"
+        },
+        "SecurityGroupIds": null,
+        "NetworkInterfaces": [
+            {
+                "DeviceIndex": 0,
+                "Groups": [
+                    "sg-0f9613afd389c288d"
+                ],
+                "SubnetId": "subnet-08469c4e69b5c4d65"
+            }
+        ],
+        "MetadataOptions": null,
+        "TagSpecifications": null,
+        "BlockDeviceMappings": null
+    }
+}

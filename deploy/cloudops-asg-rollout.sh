@@ -11,7 +11,7 @@ set +x
 : "${GIT_COMMIT_FULL:?GIT_COMMIT_FULL is required}"
 : "${ASG_AMI_REVIEWED:?ASG_AMI_REVIEWED is required}"
 
-[[ "$ASG_AMI_REVIEWED" == true ]] || { printf 'Set ASG_AMI_REVIEWED only after verifying the selected AMI is sanitized and contains no credentials or application state.\n' >&2; exit 1; }
+[[ "$ASG_AMI_REVIEWED" == true ]] || { printf 'Review the pinned official AL2023 provenance and launch-template preview before approving rollout.\n' >&2; exit 1; }
 bash deploy/assert-deploy-context.sh
 bash deploy/collect-cloudops-preflight.sh asg
 
@@ -35,10 +35,12 @@ python_cli() {
         "$PYTHON_IMAGE" python "$@"
 }
 
-read -r old_min old_desired old_max < <(aws_cli autoscaling describe-auto-scaling-groups \
+capacity_snapshot="$(aws_cli autoscaling describe-auto-scaling-groups \
     --auto-scaling-group-names "$asg_name" \
     --query 'AutoScalingGroups[0].[MinSize,DesiredCapacity,MaxSize]' \
-    --output text)
+    --output text)"
+read -r old_min old_desired old_max <<< "$capacity_snapshot"
+[[ "$old_min" =~ ^[0-9]+$ && "$old_desired" =~ ^[0-9]+$ && "$old_max" =~ ^[0-9]+$ ]] || { printf 'Invalid ASG capacity snapshot.\n' >&2; exit 1; }
 old_version="$(aws_cli autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$asg_name" --query 'AutoScalingGroups[0].LaunchTemplate.Version' --output text)"
 [[ "$old_version" =~ ^[0-9]+$ ]] || { printf 'Refusing ASG rollout: prior launch-template version is not numeric.\n' >&2; exit 1; }
 if ((old_desired == 0)) && ! ((old_min == 0 && old_max == 0)); then
@@ -47,35 +49,21 @@ if ((old_desired == 0)) && ! ((old_min == 0 && old_max == 0)); then
 fi
 
 target_group_arn="$(aws_cli elbv2 describe-target-groups --names tg-cloudops-app --query 'TargetGroups[0].TargetGroupArn' --output text)"
-user_data_file="$work_dir/cloudops-user-data.sh"
-userdata_b64_file="$work_dir/cloudops-user-data.b64"
 overrides_file="$work_dir/launch-template-overrides.json"
 chmod 700 "$work_dir"
 
-python_cli deploy/render-cloudops-user-data.py \
-    --template deploy/cloudops-user-data.sh.tmpl \
-    --deploy-script deploy/cloudops-deploy.sh \
-    --verify-script deploy/cloudops-verify.sh \
-    --image "$ECR_DEPLOY_IMAGE" \
-    --version "$GIT_COMMIT_SHORT" \
-    --commit "$GIT_COMMIT_FULL" \
-    --output "$user_data_file"
-base64 -w0 "$user_data_file" > "$userdata_b64_file"
-python_cli deploy/render-launch-template-data.py \
-    --source-data "$work_dir/launch-template.json" \
-    --user-data "$userdata_b64_file" \
-    --version "$GIT_COMMIT_SHORT" \
-    --output "$overrides_file"
+# collect-cloudops-preflight already rendered and validated these overrides.
+[[ -s "$overrides_file" && -s "$WORKSPACE/reports/asg-launch-template-preview.json" ]] || { printf 'Missing reviewed launch-template preview.\n' >&2; exit 1; }
 
 new_version="$(aws_cli ec2 create-launch-template-version \
     --launch-template-id "$launch_template_id" \
-    --source-version "$old_version" \
+    --source-version 5 \
     --version-description "CloudOps $GIT_COMMIT_SHORT" \
     --launch-template-data "file://$overrides_file" \
     --query 'LaunchTemplateVersion.VersionNumber' \
     --output text)"
 [[ "$new_version" =~ ^[0-9]+$ ]] || { printf 'EC2 did not return an explicit numeric launch-template version.\n' >&2; exit 1; }
-printf 'Created launch-template version %s from prior explicit version %s.\n' "$new_version" "$old_version"
+printf 'Created launch-template version %s from immutable source version 5; prior ASG version is %s.\n' "$new_version" "$old_version"
 
 rollback_asg() {
     local reason="$1"
@@ -153,9 +141,19 @@ fi
 
 target_deadline=$((SECONDS + 1800))
 while :; do
-    healthy_count="$(aws_cli elbv2 describe-target-health --target-group-arn "$target_group_arn" \
-        --query "length(TargetHealthDescriptions[?TargetHealth.State=='healthy'])" --output text)"
-    if [[ "$healthy_count" =~ ^[0-9]+$ ]] && ((healthy_count >= expected_targets)); then
+    # Count only this ASG's instances, never the healthy independent canary.
+    # shellcheck disable=SC2016
+    instance_ids="$(aws_cli autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$asg_name" \
+        --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' --output text)" || { rollback_asg 'ASG discovery failed' || true; exit 1; }
+    read -r -a in_service_ids <<< "$instance_ids"
+    healthy_count=0
+    for instance_id in "${in_service_ids[@]}"; do
+        [[ "$instance_id" =~ ^i-[0-9a-f]{8,17}$ ]] || { rollback_asg 'invalid ASG instance identity' || true; exit 1; }
+        target_state="$(aws_cli elbv2 describe-target-health --target-group-arn "$target_group_arn" \
+            --targets "Id=$instance_id,Port=5000" --query 'TargetHealthDescriptions[0].TargetHealth.State' --output text)" || { rollback_asg 'target health API failed' || true; exit 1; }
+        if [[ "$target_state" == healthy ]]; then ((healthy_count += 1)); fi
+    done
+    if ((${#in_service_ids[@]} == expected_targets && healthy_count == expected_targets)); then
         break
     fi
     if ((SECONDS >= target_deadline)); then
@@ -165,17 +163,7 @@ while :; do
     sleep 15
 done
 
-# JMESPath uses backticks inside its single-quoted query expression.
-# shellcheck disable=SC2016
-instance_ids="$(aws_cli autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$asg_name" \
-    --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' --output text)"
-read -r -a in_service_ids <<< "$instance_ids"
-if ((${#in_service_ids[@]} != expected_targets)); then
-    rollback_asg "expected $expected_targets InService instances, found ${#in_service_ids[@]}" || true
-    exit 1
-fi
-
-if ! bash deploy/cloudops-ssm-deploy.sh verify "${in_service_ids[@]}"; then
+if ! CLOUDOPS_REQUIRE_BOOTSTRAP_COMPLETE=true bash deploy/cloudops-ssm-deploy.sh verify "${in_service_ids[@]}"; then
     rollback_asg 'per-instance immutable image/health/target verification failed' || true
     exit 1
 fi

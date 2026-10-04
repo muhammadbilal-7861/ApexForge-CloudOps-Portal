@@ -27,7 +27,7 @@ pipeline {
         booleanParam(
             name: 'ASG_AMI_REVIEWED',
             defaultValue: false,
-            description: 'For ASG only: confirm the configured AMI was manually reviewed as sanitized and contains no credentials or app state.'
+            description: 'For ASG only: confirm the pinned official AL2023 image provenance and generated launch-template preview have been reviewed.'
         )
     }
 
@@ -392,7 +392,7 @@ pipeline {
                         bash deploy/assert-deploy-context.sh
                     '''
                     if (params.DEPLOY_TARGET == 'asg' && !params.ASG_AMI_REVIEWED) {
-                        error('ASG deployment requires ASG_AMI_REVIEWED=true after manual AMI sanitization review.')
+                        error('ASG deployment requires ASG_AMI_REVIEWED=true after official-image provenance and bootstrap preview review.')
                     }
                     def digest = sh(
                         script: '''#!/bin/bash
