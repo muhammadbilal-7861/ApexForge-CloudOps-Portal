@@ -207,7 +207,7 @@ def test_per_instance_verification_requires_matching_bootstrap_marker(fake_canar
 
 
 @pytest.mark.parametrize("failure", [None, "one-unhealthy", "authorization", "instance-verification",
-                                     "initial-denied", "initial-partial", "new-version-denied"])
+                                     "initial-denied", "initial-partial", "new-version-denied", "extra-instance"])
 def test_asg_rollout_reuses_approved_candidate_counts_only_its_instances_and_rolls_back(tmp_path, failure):
     if os.name != "posix":
         pytest.skip("shell orchestration requires Linux")
@@ -223,7 +223,7 @@ def test_asg_rollout_reuses_approved_candidate_counts_only_its_instances_and_rol
         '#!/bin/bash\n[[ "$1" == 6 ]] || exit 2\n[[ "$TEST_ROLLOUT_FAILURE" != new-version-denied ]]\n')
     (workspace / "deploy/cloudops-ssm-deploy.sh").write_text(
         '#!/bin/bash\n[[ "$CLOUDOPS_REQUIRE_BOOTSTRAP_COMPLETE" == true ]] || exit 2\n'
-        '[[ "$*" == "verify i-11111111111111111 i-22222222222222222" ]] || exit 2\n'
+        '[[ "$*" == "verify i-11111111111111111" ]] || exit 2\n'
         '[[ "$TEST_ROLLOUT_FAILURE" != instance-verification ]]\n')
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -242,16 +242,16 @@ elif a[:2]==["autoscaling","describe-auto-scaling-groups"]:
     if "LaunchTemplate.Version" in query and "MinSize" in query: print(" ".join(state))
     elif "MinSize" in query: print(" ".join(state[:3]))
     elif "LaunchTemplate.Version" in query: print("5")
-    else: print("i-11111111111111111 i-22222222222222222")
+    else: print("i-11111111111111111 i-22222222222222222" if failure=="extra-instance" else "i-11111111111111111")
 elif a[:2]==["elasticloadbalancing","describe-target-groups"] or a[:2]==["elbv2","describe-target-groups"]:
     print("arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/test")
 elif a[:2]==["elbv2","describe-target-health"]:
     if failure=="authorization": sys.exit(254)
     if "--targets" not in a: raise SystemExit("Global target counts could include the canary")
     target=a[a.index("--targets")+1]
-    print("unhealthy" if failure=="one-unhealthy" and "i-2222" in target else "healthy")
+    print("unhealthy" if failure=="one-unhealthy" and "i-1111" in target else "healthy")
 elif a[:2]==["autoscaling","update-auto-scaling-group"]:
-    initial=a[a.index("--desired-capacity")+1]=="2"
+    initial=a[a.index("--desired-capacity")+1]=="1"
     if initial and failure=="initial-denied": sys.exit(254)
     state=[a[a.index(flag)+1] for flag in ("--min-size","--desired-capacity","--max-size")]
     state.append(a[a.index("--launch-template")+1].rsplit("=",1)[-1] if "--launch-template" in a else json.loads(state_path.read_text())[3])
@@ -291,8 +291,13 @@ else: sys.exit(2)
     else:
         assert result.returncode == 0, result.stdout + result.stderr
         evidence = json.loads((workspace / "reports/deployment-evidence.json").read_text())
-        assert evidence["healthyTargets"] == 2
-        assert evidence["instances"] == ["i-11111111111111111", "i-22222222222222222"]
+        assert evidence["healthyTargets"] == 1
+        assert evidence["expectedTargets"] == 1
+        assert evidence["capacity"] == {"min": 1, "desired": 1, "max": 1}
+        assert evidence["perInstanceVerification"] == "passed"
+        assert evidence["canaryRetired"] is False
+        assert evidence["instances"] == ["i-11111111111111111"]
+        assert json.loads(state_path.read_text()) == ["1", "1", "1", "6"]
 
 
 @pytest.fixture
@@ -300,13 +305,15 @@ def bootstrap_host(fake_canary_host):
     host = fake_canary_host
     empty_host(host)
     root = Path(host["tmp"]) / "root"
-    for folder in ("var/log", "var/lib/cloudops", "etc", "run", "opt/aws/amazon-cloudwatch-agent/bin"):
+    for folder in ("var/log", "var/lib/cloudops", "etc", "run", "opt/aws/amazon-cloudwatch-agent/bin", "dev"):
         (root / folder).mkdir(parents=True, exist_ok=True)
     (root / "etc/os-release").write_text("ID=ubuntu\nVERSION_ID=24.04\n")
     tool_log = root / "tools.jsonl"
     gate = root / "gate.json"
     host["env"].update(BOOTSTRAP_TOOL_LOG=str(tool_log), BOOTSTRAP_GATE=str(gate),
                        BOOTSTRAP_SOURCE_ROOT=str(ROOT / "deploy"),
+                       BOOTSTRAP_DIAGNOSTICS_FILE=str(root / "cloudwatch-status.jsonl"),
+                       BOOTSTRAP_AWS_CALLS=str(root / "aws-calls.jsonl"),
                        CLOUDOPS_RUNTIME_ENV=str(root / "etc/cloudops/runtime.env"))
     generic = '''#!/usr/bin/env python3
 import json, os, sys
@@ -318,6 +325,7 @@ if name=="nft":
         if os.getenv("TEST_GATE_RELEASE_FAIL")=="true": sys.exit(1)
         Path(os.environ["BOOTSTRAP_GATE"]).write_text("false")
     else: Path(os.environ["BOOTSTRAP_GATE"]).write_text("true")
+elif name=="amazon-cloudwatch-agent-ctl" and os.getenv("TEST_CW_AGENT_FAIL")=="true": sys.exit(19)
 elif name=="apt-get" and os.getenv("TEST_INSTALL_FAIL")=="true": sys.exit(1)
 elif name=="systemctl" and "snap.amazon-ssm-agent.amazon-ssm-agent.service" in a and os.getenv("TEST_SSM_INACTIVE")=="true": sys.exit(1)
 elif name=="snap" and a[:1]==["list"] and os.getenv("TEST_SSM_ABSENT")=="true": sys.exit(1)
@@ -345,7 +353,10 @@ import os, shutil, sys
 from pathlib import Path
 a=sys.argv[1:]
 url=next((item for item in a if item.startswith("https://raw.githubusercontent.com/")),None)
-if url:
+if any(item.startswith("http://169.254.169.254/") for item in a):
+    if os.getenv("TEST_DIAGNOSTICS_IMDS_FAIL")=="true": sys.exit(22)
+    print("fixture-imds-token" if any("/api/token" in item for item in a) else "i-11111111111111111")
+elif url:
     shutil.copyfile(Path(os.environ["BOOTSTRAP_SOURCE_ROOT"])/url.rsplit("/",1)[1], a[a.index("-o")+1])
 elif any(item.startswith(("https://awscli.amazonaws.com/", "https://amazoncloudwatch-agent.s3.amazonaws.com/")) for item in a):
     Path(a[a.index("-o")+1]).write_bytes(b"fixture artifact")
@@ -353,6 +364,26 @@ else:
     os.execv(str(Path(sys.argv[0]).with_name("fixture-http")), ["fixture-http",*a])
 ''')
     curl.chmod(0o755)
+    aws = bin_dir / "aws"
+    aws.rename(bin_dir / "fixture-aws")
+    aws.write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+a=sys.argv[1:]
+with open(os.environ["BOOTSTRAP_AWS_CALLS"],"a") as log: log.write(json.dumps(a)+"\\n")
+if a[:2] in (["logs","create-log-stream"],["logs","put-log-events"]):
+    if os.getenv("TEST_LOG_UPLOAD_FAIL")=="true":
+        print("An error occurred (AccessDeniedException) when calling the Test operation: private-error",file=sys.stderr)
+        sys.exit(254)
+    if a[1]=="create-log-stream" and os.getenv("TEST_EXISTING_LOG_STREAM")=="true":
+        print("An error occurred (ResourceAlreadyExistsException) when calling the Test operation: existing",file=sys.stderr)
+        sys.exit(254)
+    if a[1]=="put-log-events":
+        events=json.loads(Path(a[a.index("--log-events")+1].removeprefix("file://")).read_text())
+        with open(os.environ["BOOTSTRAP_DIAGNOSTICS_FILE"],"a") as log: log.write(json.dumps(events)+"\\n")
+else: os.execv(str(Path(sys.argv[0]).with_name("fixture-aws")), ["fixture-aws",*a])
+''')
+    aws.chmod(0o755)
     # Sandbox all host paths; use unmodified real deploy/verify scripts and mock only external services.
     script = rendered_bootstrap()
     import hashlib
@@ -361,7 +392,7 @@ else:
                           "f25c81f42627ac481b51215e8e6f989208ab266f8b224ffd66a208061e790f1c"):
         script = script.replace(reviewed_hash, fixture_hash)
     for path in ("/var/log", "/var/lib/cloudops", "/etc/cloudops", "/etc/os-release",
-                 "/etc/cloudwatch-agent-cloudops.json", "/usr/local/sbin", "/usr/local/aws-cli", "/usr/local/bin", "/var/lib/apt/lists", "/opt/aws/amazon-cloudwatch-agent", "/run/cloudops-bootstrap"):
+                 "/etc/cloudwatch-agent-cloudops.json", "/usr/local/sbin", "/usr/local/aws-cli", "/usr/local/bin", "/var/lib/apt/lists", "/opt/aws/amazon-cloudwatch-agent", "/run/cloudops-bootstrap", "/dev/console"):
         script = script.replace(path, str(root) + path)
     target = root / "bootstrap.sh"
     target.write_text(script)
