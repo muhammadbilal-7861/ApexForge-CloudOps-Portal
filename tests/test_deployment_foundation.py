@@ -145,6 +145,23 @@ def test_ecr_publisher_reuses_existing_matching_commit_tag_without_push(
     assert not any(command[:2] == ["docker", "push"] for command in fake.commands)
 
 
+@pytest.mark.parametrize("repeat_matches", [True, False])
+def test_repeat_build_keeps_immutable_tag_and_compares_actual_image_id(ecr_publisher_config, repeat_matches) -> None:
+    helper = load_helper("publish-ecr-image")
+    fake = FakeEcrPublisher()
+    published_digest = helper.publish(ecr_publisher_config, fake)
+    fake.commands.clear()
+    if repeat_matches:
+        assert helper.publish(ecr_publisher_config, fake) == published_digest
+    else:
+        fake.built_id = "sha256:" + "d" * 64
+        with pytest.raises(helper.PublishError, match="differs from the image built and scanned"):
+            helper.publish(ecr_publisher_config, fake)
+    assert not any(command[:2] == ["docker", "push"] for command in fake.commands)
+    aws_operations = [command for command in fake.commands if "batch-delete-image" in command]
+    assert aws_operations == []
+
+
 def test_ecr_publisher_rejects_existing_commit_tag_with_different_image(
     ecr_publisher_config: dict[str, str],
 ) -> None:
@@ -235,6 +252,7 @@ def test_ssm_canary_preflight_renderer_is_checksum_pinned_and_secret_safe() -> N
     )
     commands = helper.render(args)["Parameters"]["commands"]
     assert any("cloudops-canary-preflight.sh" in command for command in commands)
+    assert commands[-1].endswith(args.target_group_arn)
     assert any("sha256sum --check" in command for command in commands)
     assert any("cloudops-canary-preflight.sh" in command and "@sha256:" in command for command in commands)
     assert any(command.startswith("trap ") and "rm -f" in command for command in commands)
@@ -455,6 +473,9 @@ elif a[:2]==["secretsmanager","get-secret-value"]:
     if "flask-session-key" in " ".join(a): print(os.environ["TEST_SECRET"])
     else: print(json.dumps({"host":"db.local","username":"app","password":"private","dbname":"cloudops","port":3306}))
 elif a[:2]==["elbv2","describe-target-health"]:
+    if os.getenv("TEST_ALB_DENIED")=="true":
+        print("AccessDenied: DescribeTargetHealth", file=sys.stderr)
+        sys.exit(254)
     s=json.load(open(os.environ["DOCKER_STATE"])); prod=next((c for c in s["containers"].values() if c["name"]=="cloudops-app" and c["running"]),None)
     old=any(c["running"] and c["image"]=="cloudops-flask:1.1" for c in s["containers"].values())
     print("healthy" if (old or (prod and os.getenv("TEST_ALB_HEALTHY","true")=="true")) else "initial")
@@ -522,6 +543,16 @@ def run_fake_deploy(host: dict[str, str]) -> subprocess.CompletedProcess[str]:
          "--instance-id", "i-02777a62f2a65bc1e"],
         env=host["env"], capture_output=True, text=True, timeout=30,
     )
+
+
+def test_alb_authorization_failure_prevents_candidate_and_cutover(fake_canary_host) -> None:
+    before = Path(fake_canary_host["state"]).read_bytes()
+    fake_canary_host["env"]["TEST_ALB_DENIED"] = "true"
+    result = run_fake_deploy(fake_canary_host)
+    assert result.returncode != 0
+    assert "ALB permission check failed before candidate creation" in result.stdout + result.stderr
+    assert Path(fake_canary_host["state"]).read_bytes() == before
+    assert not Path(fake_canary_host["env"]["DOCKER_CALLS"]).exists()
 
 
 def configure_legacy_bridge(host: dict[str, str], port_bindings: dict[str, list[dict[str, str]]] | None = None, *, dual_stack: bool = False) -> None:

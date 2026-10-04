@@ -39,7 +39,8 @@
       "Sid": "ReadOnlyCloudOpsTargetHealth",
       "Effect": "Allow",
       "Action": "elasticloadbalancing:DescribeTargetHealth",
-      "Resource": "arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/*"
+      "Resource": "*",
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "eu-north-1"}}
     },
     {
       "Sid": "ConfirmPrecreatedCloudOpsLogGroup",

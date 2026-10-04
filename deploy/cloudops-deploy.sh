@@ -140,6 +140,8 @@ fi
 if [[ -n "$target_group_arn" || -n "$instance_id" ]]; then
     [[ "$target_group_arn" == arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/* ]] || fail 'unexpected ALB target group.'
     [[ "$instance_id" =~ ^i-[0-9a-f]{8,17}$ ]] || fail 'an EC2 instance ID is required for ALB verification.'
+    aws elbv2 describe-target-health --region "$AWS_REGION" --target-group-arn "$target_group_arn" \
+        --targets "Id=$instance_id,Port=5000" --output json >/dev/null || fail 'Application-role ALB permission check failed before candidate creation.'
 fi
 if [[ ! -f "$RUNTIME_ENV" ]]; then
     fail "$RUNTIME_ENV is missing. Provision the approved runtime environment before deploying."
@@ -400,7 +402,11 @@ restore_previous() {
                 while ((SECONDS < target_deadline)); do
                     restored_target="$(aws elbv2 describe-target-health --region "$AWS_REGION" \
                         --target-group-arn "$target_group_arn" --targets "Id=$instance_id,Port=5000" \
-                        --query 'TargetHealthDescriptions[0].TargetHealth.State' --output text)"
+                        --query 'TargetHealthDescriptions[0].TargetHealth.State' --output text)" || {
+                        log 'CRITICAL: ALB recovery API failed; original container was restored but ALB recovery cannot be confirmed.' >&2
+                        set -e
+                        return 1
+                    }
                     if [[ "$restored_target" == healthy ]]; then break; fi
                     sleep 10
                 done

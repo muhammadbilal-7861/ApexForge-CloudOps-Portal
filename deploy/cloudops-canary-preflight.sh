@@ -7,12 +7,20 @@ readonly RUNTIME_ENV="${CLOUDOPS_RUNTIME_ENV:-/etc/cloudops/runtime.env}"
 readonly ECR_REPOSITORY=apexforge-cloudops-portal
 readonly LOG_GROUP=/cloudops/app
 
-if (($# != 1)) || [[ ! "$1" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]; then
-    printf 'Usage: %s immutable-ECR-image-reference\n' "$0" >&2
+if (($# != 2)) || [[ ! "$1" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]; then
+    printf 'Usage: %s immutable-ECR-image-reference target-group-arn\n' "$0" >&2
     exit 2
 fi
 image_ref="$1"
 image_digest="${image_ref##*@}"
+target_group_arn="$2"
+[[ "$target_group_arn" == arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/* ]] || { printf 'Unexpected target group.\n' >&2; exit 2; }
+# This runs via SSM on the application node, with its instance role, before approval.
+# A denied API is not an unhealthy target: fail on the first unsuccessful request.
+aws elbv2 describe-target-health --region "$AWS_REGION" --target-group-arn "$target_group_arn" --output json >/dev/null || {
+    printf 'Application-role ALB permission check failed; refusing deployment.\n' >&2
+    exit 1
+}
 
 for command_name in aws python3 stat; do
     command -v "$command_name" >/dev/null 2>&1 || { printf 'Required canary prerequisite is missing: %s\n' "$command_name" >&2; exit 1; }

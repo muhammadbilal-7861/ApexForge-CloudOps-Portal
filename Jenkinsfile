@@ -32,7 +32,7 @@ pipeline {
     }
 
     environment {
-        PYTHON_IMAGE = 'python:3.12-slim'
+        PYTHON_IMAGE = 'python:3.12-slim@sha256:6b1f85a08c199d29d5b6d71ab9c27bd5b3b393492e01216a15758ff69c4be8b8'
         GITLEAKS_IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.29.1'
         TRIVY_IMAGE = 'ghcr.io/aquasecurity/trivy:0.74.0'
         TRIVY_CACHE_VOLUME = 'apexforge-trivy-cache'
@@ -142,7 +142,7 @@ pipeline {
                         --env WORKSPACE="$WORKSPACE" \
                         --env PIP_CACHE_DIR="$WORKSPACE/.pip-cache" \
                         "$PYTHON_IMAGE" \
-                        sh -ec 'python -m venv --clear "$WORKSPACE/.ci-venv" && "$WORKSPACE/.ci-venv/bin/pip" install --disable-pip-version-check -r requirements.txt && "$WORKSPACE/.ci-venv/bin/pip" check'
+                        sh -ec 'python -m venv --clear "$WORKSPACE/.ci-venv" && "$WORKSPACE/.ci-venv/bin/pip" install --disable-pip-version-check --only-binary=:all: --require-hashes -r requirements.txt && "$WORKSPACE/.ci-venv/bin/pip" check'
                 '''
             }
         }
@@ -299,7 +299,7 @@ pipeline {
             steps {
                 sh '''#!/bin/sh
                     set -eu
-                    docker build --pull --tag "$APP_IMAGE_REF" .
+                    bash deploy/build-image.sh "$APP_IMAGE_REF"
                 '''
             }
         }

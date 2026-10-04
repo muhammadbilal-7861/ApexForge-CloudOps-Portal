@@ -63,7 +63,7 @@ def render(args: argparse.Namespace) -> dict:
     if args.mode == "preflight":
         path = f"/tmp/apexforge-{args.version}-cloudops-canary-preflight.sh"
         commands.insert(1, f"trap 'rm -f -- {shlex.quote(path)}' EXIT")
-        commands.append(f"{shlex.quote(path)} {shlex.quote(args.image)}")
+        commands.append(f"{shlex.quote(path)} {shlex.quote(args.image)} {shlex.quote(args.target_group_arn)}")
         return {
             "DocumentName": "AWS-RunShellScript",
             "InstanceIds": args.instance_ids,
