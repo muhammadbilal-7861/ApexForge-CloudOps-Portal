@@ -201,6 +201,10 @@ log 'Checking the pre-created CloudWatch log group and recording a complete cont
 log_group="$(aws logs describe-log-groups --region "$AWS_REGION" --log-group-name-prefix /cloudops/app --query "logGroups[?logGroupName=='/cloudops/app'].logGroupName | [0]" --output text)"
 [[ "$log_group" == /cloudops/app ]] || fail 'pre-created /cloudops/app log group is unavailable to the EC2 role.'
 docker ps -a --format 'container name={{.Names}} image={{.Image}}'
+if [[ "${CLOUDOPS_FIRST_BOOT:-false}" == true ]]; then
+    first_boot_inventory="$(docker ps --all --quiet --no-trunc)" || fail 'first-boot container inventory failed.'
+    [[ -z "$first_boot_inventory" ]] || fail 'clean first boot requires no existing containers; legacy reuse is forbidden.'
+fi
 
 previous_id=""
 previous_name=""

@@ -22,6 +22,8 @@ def render(template: str, *, image: str, version: str, commit: str, deploy_scrip
         raise ValueError("image must be pinned to a digest in the configured ECR repository")
     if not VERSION_RE.fullmatch(version) or not SHA_RE.fullmatch(commit):
         raise ValueError("invalid version or full Git commit")
+    if not commit.startswith(version):
+        raise ValueError("version must identify the source commit")
     values = {
         "@@AWS_REGION@@": "eu-north-1",
         "@@IMAGE_URI@@": image,

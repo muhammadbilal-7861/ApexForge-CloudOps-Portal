@@ -2,6 +2,13 @@
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "VerifyReviewedPublicAmazonLinuxImage",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:eu-north-1::parameter/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64",
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "eu-north-1"}}
+    },
+    {
       "Sid": "ReadOnlyDeploymentDiscovery",
       "Effect": "Allow",
       "Action": [

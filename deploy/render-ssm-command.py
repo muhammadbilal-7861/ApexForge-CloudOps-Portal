@@ -84,11 +84,14 @@ def render(args: argparse.Namespace) -> dict:
 
     verify = (
         f"/usr/local/sbin/cloudops-verify.sh --expected-image {shlex.quote(args.image)} "
+        "--require-container-health --wait-seconds 180 "
         f"--expected-version {shlex.quote(args.version)} --instance-id \"${{instance_id}}\" "
         f"--target-group-arn {shlex.quote(args.target_group_arn)}"
     )
     if args.require_target_healthy:
         verify += " --require-target-healthy"
+    if getattr(args, "require_bootstrap_complete", False):
+        verify += " --require-bootstrap-complete"
     commands.append(verify)
 
     return {
@@ -108,6 +111,7 @@ def main() -> None:
     parser.add_argument("--deploy-sha256", required=True)
     parser.add_argument("--verify-sha256", required=True)
     parser.add_argument("--preflight-sha256", required=True)
+    parser.add_argument("--require-bootstrap-complete", action="store_true")
     parser.add_argument("--target-group-arn", required=True)
     parser.add_argument("--instance-ids", nargs="+", required=True)
     parser.add_argument("--require-target-healthy", action="store_true")

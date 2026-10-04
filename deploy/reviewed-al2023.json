@@ -1,0 +1,18 @@
+{
+  "region": "eu-north-1",
+  "image_id": "ami-01e082ac2f79f3918",
+  "owner_id": "137112412989",
+  "owner_alias": "amazon",
+  "name": "al2023-ami-2023.12.20260930.0-kernel-6.18-x86_64",
+  "architecture": "x86_64",
+  "creation_date": "2026-09-29T19:48:59.000Z",
+  "source_image_id": "ami-0d53cc9bd365ad65b",
+  "source_image_region": "us-west-2",
+  "ssm_parameter": "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64",
+  "ssm_parameter_version": 191,
+  "review_date": "2026-10-04",
+  "source_template_version": 5,
+  "rejected_image_id": "ami-09b67ca726bea7328",
+  "application_security_group": "sg-0f9613afd389c288d",
+  "instance_profile_arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"
+}

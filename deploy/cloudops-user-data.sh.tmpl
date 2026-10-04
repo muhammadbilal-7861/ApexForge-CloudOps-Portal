@@ -2,9 +2,27 @@
 set -Eeuo pipefail
 set +x
 exec >> /var/log/cloudops-bootstrap.log 2>&1
-# The trap body is intentionally evaluated only when ERR fires.
-# shellcheck disable=SC2154
-trap 'status=$?; printf "cloudops bootstrap failed: exit=%s line=%s\n" "$status" "$LINENO"; exit "$status"' ERR
+bootstrap_failed() {
+    local status="$1" line="$2" name actual_image actual_version
+    trap - ERR
+    set +e
+    # Leave inbound port 5000 gated. Stop only containers from this exact release;
+    # unknown workloads/volumes are retained for inspection and are never deleted.
+    if [[ -n "${IMAGE_URI:-}" && -n "${APP_VERSION:-}" ]]; then
+        for name in cloudops-app "cloudops-candidate-${APP_VERSION:0:12}"; do
+            actual_image="$(docker inspect --format '{{.Config.Image}}' "$name" 2>/dev/null)"
+            actual_version="$(docker inspect --format '{{index .Config.Labels "org.apexforge.version"}}' "$name" 2>/dev/null)"
+            if [[ "$actual_image" == "$IMAGE_URI" && "$actual_version" == "$APP_VERSION" ]]; then
+                docker update --restart=no "$name" >/dev/null 2>&1
+                docker stop --time 10 "$name" >/dev/null 2>&1
+            fi
+        done
+    fi
+    rm -f /var/lib/cloudops/bootstrap-complete.json
+    printf 'cloudops bootstrap failed: exit=%s line=%s; inbound app traffic remains blocked\n' "$status" "$line"
+    exit "$status"
+}
+trap 'bootstrap_failed "$?" "$LINENO"' ERR
 umask 077
 
 readonly AWS_REGION="@@AWS_REGION@@"
@@ -21,9 +39,13 @@ readonly VERIFY_SCRIPT_SHA256="@@VERIFY_SCRIPT_SHA256@@"
 [[ "$IMAGE_URI" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]
 [[ "$APP_VERSION" =~ ^[0-9a-f]{12,40}$ ]]
 [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+# This bootstrap is reviewed exclusively for official AL2023 x86_64.
+# shellcheck disable=SC1091
+source /etc/os-release
+[[ "$ID" == amzn && "$VERSION_ID" == 2023 && "$(uname -m)" == x86_64 ]]
 
 if command -v dnf >/dev/null 2>&1; then
-    dnf install -y docker awscli curl python3 amazon-ssm-agent amazon-cloudwatch-agent
+    dnf install -y docker awscli-2 curl-minimal python3 amazon-ssm-agent amazon-cloudwatch-agent nftables
 elif command -v yum >/dev/null 2>&1; then
     if command -v amazon-linux-extras >/dev/null 2>&1; then
         amazon-linux-extras install -y docker
@@ -61,8 +83,19 @@ else
     exit 1
 fi
 
+# Gate both IPv4 and IPv6 ALB traffic until the exact new application passes.
+# Loopback stays available for local readiness verification. A pre-existing table
+# causes a failure rather than clearing an unknown firewall configuration.
+nft add table inet cloudops_bootstrap
+nft 'add chain inet cloudops_bootstrap input { type filter hook input priority -10; policy accept; }'
+nft 'add rule inet cloudops_bootstrap input iifname != "lo" tcp dport 5000 reject'
 systemctl enable --now docker
 systemctl enable --now amazon-ssm-agent
+systemctl is-active --quiet docker
+systemctl is-active --quiet amazon-ssm-agent
+containers="$(docker ps --all --quiet --no-trunc)"
+[[ -z "$containers" ]] || { printf 'Clean first boot found existing containers; refusing reuse.\n' >&2; false; }
+[[ ! -e /etc/cloudops/runtime.env ]] || { printf 'Clean first boot found inherited runtime configuration; refusing reuse.\n' >&2; false; }
 
 install -d -o root -g root -m 0750 /etc/cloudops /usr/local/sbin
 aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$DB_SECRET_NAME" --query SecretString --output text |
@@ -110,6 +143,8 @@ chmod 0600 /etc/cloudwatch-agent-cloudops.json
 aws logs describe-log-groups --region "$AWS_REGION" --log-group-name-prefix "$LOG_GROUP" --query "logGroups[?logGroupName=='${LOG_GROUP}'].logGroupName | [0]" --output text | grep -Fx "$LOG_GROUP" >/dev/null
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
     -a fetch-config -m ec2 -c file:/etc/cloudwatch-agent-cloudops.json -s
+systemctl enable amazon-cloudwatch-agent
+systemctl is-active --quiet amazon-cloudwatch-agent
 
 tmp_dir="$(mktemp -d /run/cloudops-bootstrap.XXXXXX)"
 trap 'rm -rf -- "$tmp_dir"' EXIT
@@ -119,5 +154,18 @@ printf '%s  %s\n' "$DEPLOY_SCRIPT_SHA256" "$tmp_dir/cloudops-deploy.sh" | sha256
 printf '%s  %s\n' "$VERIFY_SCRIPT_SHA256" "$tmp_dir/cloudops-verify.sh" | sha256sum --check --status
 install -o root -g root -m 0750 "$tmp_dir/cloudops-deploy.sh" /usr/local/sbin/cloudops-deploy.sh
 install -o root -g root -m 0750 "$tmp_dir/cloudops-verify.sh" /usr/local/sbin/cloudops-verify.sh
-/usr/local/sbin/cloudops-deploy.sh "$IMAGE_URI" "$APP_VERSION"
+CLOUDOPS_FIRST_BOOT=true /usr/local/sbin/cloudops-deploy.sh "$IMAGE_URI" "$APP_VERSION"
+/usr/local/sbin/cloudops-verify.sh --expected-image "$IMAGE_URI" --expected-version "$APP_VERSION" \
+    --require-container-health --wait-seconds 180
+install -d -o root -g root -m 0750 /var/lib/cloudops
+python3 - "$IMAGE_URI" "$APP_VERSION" "$SOURCE_COMMIT" <<'PY'
+import json, os, sys
+path = "/var/lib/cloudops/bootstrap-complete.json"
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(dict(image=sys.argv[1], version=sys.argv[2], commit=sys.argv[3]), output)
+os.chmod(path, 0o600)
+PY
+# If removing this private gate fails, ERR stops the new application and removes
+# its success marker. ASG target registration is automatic; bootstrap never registers a target.
+nft delete table inet cloudops_bootstrap
 printf 'CloudOps bootstrap completed for version %s.\n' "$APP_VERSION"

@@ -9,6 +9,7 @@ instance_id=""
 target_group_arn=""
 require_container_health=false
 require_target_healthy=false
+require_bootstrap_complete=false
 wait_seconds=0
 
 usage() {
@@ -25,6 +26,7 @@ while (($#)); do
         --target-group-arn) target_group_arn="${2:?missing target group ARN}"; shift 2 ;;
         --require-container-health) require_container_health=true; shift ;;
         --require-target-healthy) require_target_healthy=true; shift ;;
+        --require-bootstrap-complete) require_bootstrap_complete=true; shift ;;
         --wait-seconds) wait_seconds="${2:?missing wait seconds}"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) usage; printf 'Unknown argument: %s\n' "$1" >&2; exit 2 ;;
@@ -46,6 +48,16 @@ if [[ "$require_target_healthy" == true && ( -z "$target_group_arn" || -z "$inst
     printf 'Target group and instance ID are required for an ALB health gate.\n' >&2
     exit 2
 fi
+if [[ "$require_bootstrap_complete" == true ]]; then
+    [[ "$(stat -c '%U:%G:%a' /var/lib/cloudops/bootstrap-complete.json)" == root:root:600 ]] || { printf 'Missing or unsafe bootstrap success marker.\n' >&2; exit 1; }
+    python3 - "$expected_image" "$expected_version" <<'PY'
+import json, re, sys
+with open("/var/lib/cloudops/bootstrap-complete.json", encoding="utf-8") as source:
+    marker = json.load(source)
+if marker.get("image") != sys.argv[1] or marker.get("version") != sys.argv[2] or not re.fullmatch(r"[0-9a-f]{40}", marker.get("commit", "")) or not marker["commit"].startswith(sys.argv[2]):
+    raise SystemExit("Bootstrap success marker does not match the approved release")
+PY
+fi
 
 deadline=$((SECONDS + wait_seconds))
 while :; do
@@ -56,6 +68,11 @@ while :; do
 
     running="$(docker inspect --format '{{.State.Running}}' "$container_name")"
     actual_image="$(docker inspect --format '{{.Config.Image}}' "$container_name")"
+    actual_image_id="$(docker inspect --format '{{.Image}}' "$container_name")"
+    expected_image_id="$(docker image inspect --format '{{.Id}}' "$expected_image")"
+    [[ "$actual_image_id" =~ ^sha256:[0-9a-f]{64}$ && "$actual_image_id" == "$expected_image_id" ]] || {
+        printf 'Container runtime image ID does not match the approved ECR digest.\n' >&2; exit 1;
+    }
     actual_version="$(docker inspect --format '{{index .Config.Labels "org.apexforge.version"}}' "$container_name")"
     container_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_name")"
     health_status="$(curl --connect-timeout 3 --max-time 8 --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/health" || true)"

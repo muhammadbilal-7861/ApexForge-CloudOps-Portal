@@ -21,6 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_helper(name: str):
+    # Standalone deploy helpers import their reviewed sibling module.
+    if str(ROOT / "deploy") not in sys.path:
+        sys.path.insert(0, str(ROOT / "deploy"))
     spec = importlib.util.spec_from_file_location(name, ROOT / "deploy" / f"{name}.py")
     assert spec is not None
     assert spec.loader is not None
@@ -187,14 +190,18 @@ def test_launch_template_override_preserves_tags_and_omits_user_data() -> None:
     source = {
         "VersionNumber": 5,
         "LaunchTemplateData": {
+            "InstanceType": "t3.micro", "IamInstanceProfile": {"Arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"},
+            "NetworkInterfaces": [{"DeviceIndex": 0, "Groups": ["sg-0f9613afd389c288d"], "SubnetId": "subnet-08469c4e69b5c4d65"}],
             "TagSpecifications": [
                 {"ResourceType": "instance", "Tags": [{"Key": "Owner", "Value": "cloudops"}]},
                 {"ResourceType": "volume", "Tags": [{"Key": "Data", "Value": "keep"}]},
             ]
         },
     }
-    output = helper.render(source["LaunchTemplateData"], "dXNlci1kYXRh", "a" * 40)
-    assert output["UserData"] == "dXNlci1kYXRh"
+    import base64
+    encoded = base64.b64encode(b"#!/usr/bin/env bash\necho safe\n").decode()
+    output = helper.render(source["LaunchTemplateData"], encoded, "a" * 40)
+    assert output["UserData"] == encoded
     assert "UserData" not in source["LaunchTemplateData"]
     tags = {entry["ResourceType"]: entry["Tags"] for entry in output["TagSpecifications"]}
     assert {tag["Key"]: tag["Value"] for tag in tags["instance"]}["Owner"] == "cloudops"
@@ -326,7 +333,7 @@ def test_preflight_rejects_public_application_port_sources() -> None:
         raise AssertionError("public or CIDR app ingress must be rejected")
 
 
-def test_asg_preflight_uses_elb_target_group_arn_key(tmp_path: Path) -> None:
+def write_asg_preflight_snapshots(tmp_path: Path):
     helper = load_helper("cloudops-aws-preflight")
     alb_arn = "arn:aws:elasticloadbalancing:eu-north-1:489502663059:loadbalancer/app/alb-load/abc"
     target_arn = "arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/def"
@@ -343,22 +350,32 @@ def test_asg_preflight_uses_elb_target_group_arn_key(tmp_path: Path) -> None:
             "TargetGroupARNs": [target_arn],
             "LaunchTemplate": {"LaunchTemplateId": "lt-028eb222c6fcfffc1", "Version": "5"},
             "MinSize": 0, "DesiredCapacity": 0, "MaxSize": 0,
+            "HealthCheckType": "ELB",
         }]},
         "launch-template.json": {"VersionNumber": 5, "LaunchTemplateData": {
             "ImageId": "ami-09b67ca726bea7328", "InstanceType": "t3.micro",
-            "IamInstanceProfile": {"Name": "CloudOpsEC2Role"}, "SecurityGroupIds": ["sg-app"],
+            "IamInstanceProfile": {"Arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"}, "SecurityGroupIds": ["sg-0f9613afd389c288d"],
         }},
-        "security-groups.json": {"SecurityGroups": [{"GroupId": "sg-app", "IpPermissions": [{
+        "security-groups.json": {"SecurityGroups": [{"GroupId": "sg-0f9613afd389c288d", "IpPermissions": [{
             "IpProtocol": "tcp", "FromPort": 5000, "ToPort": 5000,
             "UserIdGroupPairs": [{"GroupId": "sg-alb"}, {"GroupId": "sg-obs"}],
         }]}]},
     }
+    snapshots["launch-template-source.json"] = snapshots["launch-template.json"]
+    snapshots["reviewed-ami.json"] = json.loads((ROOT / "tests/fixtures/aws-reviewed-al2023.json").read_text())
+    snapshots["reviewed-ami-parameter.json"] = json.loads((ROOT / "tests/fixtures/aws-reviewed-al2023-parameter.json").read_text())
     for name, document in snapshots.items():
         (tmp_path / name).write_text(json.dumps(document), encoding="utf-8")
 
+    return helper, target_arn
+
+
+def test_asg_preflight_uses_elb_target_group_arn_key(tmp_path: Path) -> None:
+    helper, target_arn = write_asg_preflight_snapshots(tmp_path)
+
     found_arn, security_groups = helper.validate_common(tmp_path, "asg")
     assert found_arn == target_arn
-    assert security_groups == ["sg-app"]
+    assert security_groups == ["sg-0f9613afd389c288d"]
 
 
 @pytest.fixture
@@ -388,6 +405,7 @@ def get(x):
 def fmt(t,c):
     if t=="{{.Id}}": return c["id"]
     if t=="{{.Config.Image}}": return c["image"]
+    if t=="{{.Image}}": return c.get("runtime_image_id","sha256:"+hashlib.sha256(c["image"].encode()).hexdigest())
     if t=="{{.State.Running}}": return str(c["running"]).lower()
     if t=="{{.HostConfig.NetworkMode}}": return c["network"]
     if t=="{{json .HostConfig.PortBindings}}": return json.dumps(c.get("port_bindings"))
@@ -412,6 +430,8 @@ if a[0]=="ps":
         print("\n".join(c["id"] if "--no-trunc" in a else c["id"][:12] for c in selected))
     else:
         for c in selected: print(f'container name={c["name"]} image={c["image"]}')
+elif a[:2]==["image","inspect"]:
+    print("sha256:"+hashlib.sha256(a[-1].encode()).hexdigest())
 elif a[0]=="inspect":
     target=a[-1]; c=get(target)
     if c is None: sys.exit(1)
@@ -462,6 +482,10 @@ elif a[0]=="rename":
     c=get(a[-2])
     if c is None or get(a[-1]): sys.exit(1)
     c["name"]=a[-1]; save()
+elif a[0]=="update":
+    c=get(a[-1])
+    if c is None: sys.exit(1)
+    c["restart"]="no"; save()
 else: sys.exit(2)
 '''
     aws_stub = r'''#!/usr/bin/env python3
@@ -489,7 +513,7 @@ prod=next((c for c in cs if c["running"] and c["name"]=="cloudops-app"),None)
 legacy=any(c["running"] and c["image"]=="cloudops-flask:1.1" for c in cs)
 if u.port==5001:
     key="TEST_CANDIDATE_"+("READY" if u.path=="/ready" else "HTTP")
-    status=os.getenv(key,"200") if candidate and (legacy or prod) else "000"
+    status=os.getenv(key,"200") if candidate else "000"
 else:
     key="TEST_PRODUCTION_"+("READY" if u.path=="/ready" else "HTTP")
     status=os.getenv(key,"200") if prod else ("200" if legacy else "000")

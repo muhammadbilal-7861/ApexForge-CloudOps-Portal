@@ -59,8 +59,18 @@ else
     aws_cli ec2 describe-launch-template-versions \
         --launch-template-id lt-028eb222c6fcfffc1 \
         --versions "$launch_version" \
-        --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:{ImageId:LaunchTemplateData.ImageId,InstanceType:LaunchTemplateData.InstanceType,IamInstanceProfile:LaunchTemplateData.IamInstanceProfile,SecurityGroupIds:LaunchTemplateData.SecurityGroupIds,NetworkInterfaces:LaunchTemplateData.NetworkInterfaces,MetadataOptions:LaunchTemplateData.MetadataOptions,TagSpecifications:LaunchTemplateData.TagSpecifications}}' \
+        --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:LaunchTemplateData.{ImageId:ImageId,InstanceType:InstanceType,IamInstanceProfile:IamInstanceProfile,SecurityGroupIds:SecurityGroupIds,NetworkInterfaces:NetworkInterfaces,MetadataOptions:MetadataOptions,TagSpecifications:TagSpecifications,BlockDeviceMappings:BlockDeviceMappings}}' \
         --output json > "$work_dir/launch-template.json"
+    # v5 is an immutable configuration source only; never reuse its AMI/UserData.
+    aws_cli ec2 describe-launch-template-versions --launch-template-id lt-028eb222c6fcfffc1 --versions 5 \
+        --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:LaunchTemplateData.{ImageId:ImageId,InstanceType:InstanceType,IamInstanceProfile:IamInstanceProfile,SecurityGroupIds:SecurityGroupIds,NetworkInterfaces:NetworkInterfaces,MetadataOptions:MetadataOptions,TagSpecifications:TagSpecifications,BlockDeviceMappings:BlockDeviceMappings}}' \
+        --output json > "$work_dir/launch-template-source.json"
+    reviewed_ami="$(docker run --rm --volumes-from jenkins --workdir "$WORKSPACE" "$PYTHON_IMAGE" \
+        python -c 'import json; print(json.load(open("deploy/reviewed-al2023.json"))["image_id"])')"
+    reviewed_parameter="$(docker run --rm --volumes-from jenkins --workdir "$WORKSPACE" "$PYTHON_IMAGE" \
+        python -c 'import json; print(json.load(open("deploy/reviewed-al2023.json"))["ssm_parameter"])')"
+    aws_cli ec2 describe-images --image-ids "$reviewed_ami" --owners amazon --output json > "$work_dir/reviewed-ami.json"
+    aws_cli ssm get-parameter --name "$reviewed_parameter" --output json > "$work_dir/reviewed-ami-parameter.json"
     app_sgs="$(aws_cli ec2 describe-launch-template-versions --launch-template-id lt-028eb222c6fcfffc1 --versions "$launch_version" --query 'LaunchTemplateVersions[0].LaunchTemplateData.SecurityGroupIds' --output text)"
     if [[ "$app_sgs" == None ]]; then
         app_sgs="$(aws_cli ec2 describe-launch-template-versions --launch-template-id lt-028eb222c6fcfffc1 --versions "$launch_version" --query 'LaunchTemplateVersions[0].LaunchTemplateData.NetworkInterfaces[].Groups[]' --output text)"
@@ -83,4 +93,7 @@ docker run --rm \
 if [[ "$mode" == canary ]]; then
     # SSM Run Command performs secret-safe checks using the target instance role before approval.
     bash deploy/cloudops-ssm-deploy.sh preflight i-02777a62f2a65bc1e
+fi
+if [[ "$mode" == asg ]]; then
+    bash deploy/prepare-cloudops-asg.sh
 fi
