@@ -5,27 +5,32 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-REVIEW = json.loads(Path(__file__).with_name("reviewed-al2023.json").read_text(encoding="utf-8"))
+REVIEW = json.loads(Path(__file__).with_name("reviewed-ubuntu24.json").read_text(encoding="utf-8"))
 
 
 def validate_ami(payload: dict, parameter: dict | None = None) -> dict:
     images = payload.get("Images", [])
     if len(images) != 1:
-        raise ValueError("expected exactly one reviewed Amazon Linux image")
+        raise ValueError("expected exactly one reviewed Canonical Ubuntu image")
     image = images[0]
     expected = {
         "ImageId": REVIEW["image_id"], "OwnerId": REVIEW["owner_id"],
-        "ImageOwnerAlias": "amazon", "Name": REVIEW["name"],
-        "ImageLocation": "amazon/" + REVIEW["name"], "Architecture": "x86_64",
+        "ImageOwnerAlias": REVIEW["owner_alias"], "Name": REVIEW["name"],
+        "ImageLocation": REVIEW["image_location"], "Architecture": "x86_64",
         "State": "available", "ImageType": "machine", "RootDeviceType": "ebs",
         "VirtualizationType": "hvm", "Public": True, "ImdsSupport": "v2.0",
-        "CreationDate": REVIEW["creation_date"], "SourceImageId": REVIEW["source_image_id"],
-        "SourceImageRegion": REVIEW["source_image_region"],
-        "PublicSsmParameterName": REVIEW["ssm_parameter"].lstrip("/"),
+        "CreationDate": REVIEW["creation_date"],
+        "PublicSsmParameterName": REVIEW["image_ssm_parameter"],
     }
     for key, value in expected.items():
         if image.get(key) != value:
             raise ValueError(f"reviewed AMI provenance mismatch: {key}")
+    root_disks = [item for item in image.get("BlockDeviceMappings", [])
+                  if item.get("DeviceName") == image.get("RootDeviceName")]
+    if len(root_disks) != 1 or root_disks[0].get("Ebs", {}).get("VolumeType") != "gp3":
+        raise ValueError("reviewed Ubuntu AMI must have exactly one gp3 EBS root disk")
+    if root_disks[0]["Ebs"].get("SnapshotId") != REVIEW["root_snapshot_id"]:
+        raise ValueError("reviewed AMI root snapshot provenance mismatch")
     if image.get("DeprecationTime") and datetime.fromisoformat(image["DeprecationTime"].replace("Z", "+00:00")) <= datetime.now(timezone.utc):
         raise ValueError("reviewed AMI is deprecated; review a replacement before rollout")
     if parameter is not None:

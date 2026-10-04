@@ -11,7 +11,7 @@ set +x
 : "${GIT_COMMIT_FULL:?GIT_COMMIT_FULL is required}"
 : "${ASG_AMI_REVIEWED:?ASG_AMI_REVIEWED is required}"
 
-[[ "$ASG_AMI_REVIEWED" == true ]] || { printf 'Review the pinned official AL2023 provenance and launch-template preview before approving rollout.\n' >&2; exit 1; }
+[[ "$ASG_AMI_REVIEWED" == true ]] || { printf 'Review the pinned official Ubuntu 24.04 LTS provenance and launch-template preview before approving rollout.\n' >&2; exit 1; }
 bash deploy/assert-deploy-context.sh
 bash deploy/collect-cloudops-preflight.sh asg
 
@@ -67,6 +67,27 @@ printf 'Created launch-template version %s from immutable source version 5; prio
 
 rollback_asg() {
     local reason="$1"
+    if ((old_min == 0 && old_desired == 0 && old_max == 0)); then
+        local current_snapshot current_min current_desired current_max current_version
+        current_snapshot="$(aws_cli autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$asg_name" \
+            --query 'AutoScalingGroups[0].[MinSize,DesiredCapacity,MaxSize,LaunchTemplate.Version]' --output text)" || return 1
+        read -r current_min current_desired current_max current_version <<< "$current_snapshot"
+        if [[ "$current_min $current_desired $current_max $current_version" == "0 0 0 $old_version" ]]; then
+            printf 'ASG rollout failed: %s. Original 0/0/0 configuration is unchanged; no rollback update needed.\n' "$reason" >&2
+            return 0
+        fi
+        # The restricted RunInstances policy intentionally excludes the unsafe v5
+        # AMI. Keep the current clean template when draining an initial rollout;
+        # restoring v5 could fail authorization even with desired capacity zero.
+        [[ "$current_version" =~ ^[0-9]+$ && "$current_version" == "$new_version" ]] || {
+            printf 'Initial rollback found an unexpected launch version; refusing to overwrite concurrent configuration.\n' >&2
+            return 1
+        }
+        printf 'ASG rollout failed: %s. Restoring capacity 0/0/0 while retaining clean template version %s.\n' "$reason" "$current_version" >&2
+        aws_cli autoscaling update-auto-scaling-group --auto-scaling-group-name "$asg_name" \
+            --min-size 0 --desired-capacity 0 --max-size 0 || return 1
+        return 0
+    fi
     printf 'ASG rollout failed: %s. Restoring prior numeric launch-template version %s and capacity %s/%s/%s.\n' \
         "$reason" "$old_version" "$old_min" "$old_desired" "$old_max" >&2
     aws_cli autoscaling update-auto-scaling-group \
@@ -88,6 +109,10 @@ rollback_asg() {
     fi
     printf 'Prior ASG launch version and capacity have been restored; verify healthy targets before further changes.\n' >&2
 }
+
+# Recheck RunInstances/CreateTags/PassRole authorization for both subnets with
+# the new numeric version before any capacity or Instance Refresh operation.
+bash deploy/validate-launch-permissions.sh "$new_version"
 
 if ((old_min == 0 && old_desired == 0 && old_max == 0)); then
     # Initial capacity is raised only after source, IAM, RDS, target wiring, subnet, AMI-review, and SG preflights plus manual approval.

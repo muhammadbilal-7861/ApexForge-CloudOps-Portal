@@ -66,10 +66,10 @@ else
         --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:LaunchTemplateData.{ImageId:ImageId,InstanceType:InstanceType,IamInstanceProfile:IamInstanceProfile,SecurityGroupIds:SecurityGroupIds,NetworkInterfaces:NetworkInterfaces,MetadataOptions:MetadataOptions,TagSpecifications:TagSpecifications,BlockDeviceMappings:BlockDeviceMappings}}' \
         --output json > "$work_dir/launch-template-source.json"
     reviewed_ami="$(docker run --rm --volumes-from jenkins --workdir "$WORKSPACE" "$PYTHON_IMAGE" \
-        python -c 'import json; print(json.load(open("deploy/reviewed-al2023.json"))["image_id"])')"
+        python -c 'import json; print(json.load(open("deploy/reviewed-ubuntu24.json"))["image_id"])')"
     reviewed_parameter="$(docker run --rm --volumes-from jenkins --workdir "$WORKSPACE" "$PYTHON_IMAGE" \
-        python -c 'import json; print(json.load(open("deploy/reviewed-al2023.json"))["ssm_parameter"])')"
-    aws_cli ec2 describe-images --image-ids "$reviewed_ami" --owners amazon --output json > "$work_dir/reviewed-ami.json"
+        python -c 'import json; print(json.load(open("deploy/reviewed-ubuntu24.json"))["ssm_parameter"])')"
+    aws_cli ec2 describe-images --image-ids "$reviewed_ami" --owners 099720109477 --output json > "$work_dir/reviewed-ami.json"
     aws_cli ssm get-parameter --name "$reviewed_parameter" --output json > "$work_dir/reviewed-ami-parameter.json"
     app_sgs="$(aws_cli ec2 describe-launch-template-versions --launch-template-id lt-028eb222c6fcfffc1 --versions "$launch_version" --query 'LaunchTemplateVersions[0].LaunchTemplateData.SecurityGroupIds' --output text)"
     if [[ "$app_sgs" == None ]]; then
@@ -96,4 +96,5 @@ if [[ "$mode" == canary ]]; then
 fi
 if [[ "$mode" == asg ]]; then
     bash deploy/prepare-cloudops-asg.sh
+    bash deploy/validate-launch-permissions.sh 5
 fi

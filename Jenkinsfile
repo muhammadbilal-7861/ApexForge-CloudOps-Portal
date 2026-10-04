@@ -27,7 +27,7 @@ pipeline {
         booleanParam(
             name: 'ASG_AMI_REVIEWED',
             defaultValue: false,
-            description: 'For ASG only: confirm the pinned official AL2023 image provenance and generated launch-template preview have been reviewed.'
+            description: 'For ASG only: confirm the pinned official Ubuntu 24.04 LTS image provenance and generated launch-template preview have been reviewed.'
         )
     }
 
@@ -428,6 +428,11 @@ pipeline {
                             bash deploy/collect-cloudops-preflight.sh "$DEPLOY_TARGET"
                         '''
                     }
+                    if (params.DEPLOY_TARGET == 'asg') {
+                        archiveArtifacts artifacts: 'reports/asg-launch-template-preview.json', fingerprint: true
+                        archiveArtifacts artifacts: 'reports/asg-launch-permissions.json', fingerprint: true
+                        echo "Review the launch-template preview before approval: ${env.BUILD_URL}artifact/reports/asg-launch-template-preview.json"
+                    }
                 }
             }
         }
@@ -444,7 +449,8 @@ pipeline {
                 }
                 timeout(time: 15, unit: 'MINUTES') {
                     input(
-                        message: "Deploy ${env.GIT_COMMIT_SHORT} to ${params.DEPLOY_TARGET}? Read-only architecture and security preflight passed.",
+                        message: "Deploy ${env.GIT_COMMIT_SHORT} to ${params.DEPLOY_TARGET}? Read-only architecture and security preflight passed." +
+                            (params.DEPLOY_TARGET == 'asg' ? " Review ${env.BUILD_URL}artifact/reports/asg-launch-template-preview.json before approving." : ''),
                         ok: 'Approve deployment',
                         submitter: env.CLOUDOPS_DEPLOY_APPROVERS,
                         submitterParameter: 'DEPLOY_APPROVED_BY'

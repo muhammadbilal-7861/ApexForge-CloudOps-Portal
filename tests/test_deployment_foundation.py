@@ -362,8 +362,8 @@ def write_asg_preflight_snapshots(tmp_path: Path):
         }]}]},
     }
     snapshots["launch-template-source.json"] = snapshots["launch-template.json"]
-    snapshots["reviewed-ami.json"] = json.loads((ROOT / "tests/fixtures/aws-reviewed-al2023.json").read_text())
-    snapshots["reviewed-ami-parameter.json"] = json.loads((ROOT / "tests/fixtures/aws-reviewed-al2023-parameter.json").read_text())
+    snapshots["reviewed-ami.json"] = json.loads((ROOT / "tests/fixtures/aws-reviewed-ubuntu24.json").read_text())
+    snapshots["reviewed-ami-parameter.json"] = json.loads((ROOT / "tests/fixtures/aws-reviewed-ubuntu24-parameter.json").read_text())
     for name, document in snapshots.items():
         (tmp_path / name).write_text(json.dumps(document), encoding="utf-8")
 
@@ -491,7 +491,8 @@ else: sys.exit(2)
     aws_stub = r'''#!/usr/bin/env python3
 import json, os, sys
 a=sys.argv[1:]
-if a[:2]==["ecr","get-login-password"]: print("test-password")
+if a==["--version"]: print("aws-cli/2.37.5 Python/3.13 Linux/x86_64")
+elif a[:2]==["ecr","get-login-password"]: print("test-password")
 elif a[:2]==["logs","describe-log-groups"]: print("None" if os.getenv("TEST_LOG_GROUP_MISSING")=="true" else "/cloudops/app")
 elif a[:2]==["secretsmanager","get-secret-value"]:
     if "flask-session-key" in " ".join(a): print(os.environ["TEST_SECRET"])

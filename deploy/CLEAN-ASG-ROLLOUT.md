@@ -1,56 +1,74 @@
-# Clean CloudOps ASG rollout
+# Clean Ubuntu 24.04 CloudOps ASG rollout
 
-`ami-09b67ca726bea7328` is rejected for launch. It is retained only as an immutable source reference in launch-template v5 while `asg-cloudops-app` is idle at 0/0/0. Its user data is never read or copied, and no AMI is built from it. A running group using that image fails preflight. Initial rollback restores capacity 0/0/0 and never launches the old image.
+## Reviewed image and launch configuration
 
-## Reviewed image and source
+Read-only AWS discovery on 2026-10-04 resolved Canonical's public parameter `/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id` (reported version 77) to **`ami-0769f265f707fecc8`** in `eu-north-1`. `DescribeImages --owners 099720109477` confirmed Canonical ownership, public/available x86_64 HVM EBS, IMDSv2 support and name `ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260923`. The gp3 root disk uses snapshot `snap-018e23b01d6c25622`. AWS reports alias `amazon` and a `noble` public-parameter alias; the Canonical account ID is authoritative. Both aliases are pinned in `reviewed-ubuntu24.json`. [Canonical image discovery](https://ubuntu.com/aws/docs/aws-how-to/instances/find-ubuntu-images/).
 
-Read-only AWS queries on 2026-10-04 resolved public parameter `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`, reported version 191, to **`ami-01e082ac2f79f3918`** in `eu-north-1`. `DescribeImages --owners amazon` verified owner **`137112412989`**, alias `amazon`, public/available HVM EBS x86_64, IMDSv2 support, name `al2023-ami-2023.12.20260930.0-kernel-6.18-x86_64`, and official image location. The AWS source image is `ami-0d53cc9bd365ad65b` in `us-west-2`. Provenance is pinned in `reviewed-al2023.json` and checked before approval.
+Deployment uses the literal reviewed ImageId, never `resolve:ssm` or the moving parameter as a launch input. Preflight checks the current public parameter against the reviewed ID/version and aborts on drift. A replacement requires a new provenance review, IAM image-resource update, fixtures and bootstrap tests. Deprecated, private, wrong-owner, non-gp3 or wrong-architecture images fail closed.
 
-The public service rejected a `:191` selector with `ParameterVersionNotFound`, so preflight reads the public parameter without a version suffix and verifies its reported version/value against the review. A moved pointer, deprecated image, different owner or wrong architecture requires a new review. It never silently changes the pinned AMI. [AWS public AMI parameter documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/finding-an-ami-parameter-store.html).
+Contaminated Ubuntu AMI `ami-09b67ca726bea7328` is rejected for launch. It is allowed only as the inventoried LT v5 source reference while the ASG is idle at 0/0/0. Its user data and snapshots are never copied; no AMI is built from it. Every new numeric LT version uses `--source-version 5`, overriding AMI/user data, private network interface, tags and metadata. V5 and the default version stay unchanged. Preserve `t3.micro`, profile ARN `arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role`, and group `sg-0f9613afd389c288d`. The new LT has no subnet pin or public IP. ASG subnets `subnet-08469c4e69b5c4d65` and `subnet-05788ba98ca1096e6` remain unchanged. IMDS requires tokens, an enabled endpoint and hop limit 1.
 
-Source `lt-028eb222c6fcfffc1` v5 uses `t3.micro`, profile ARN `arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role`, and group `sg-0f9613afd389c288d`. Its primary interface pins one subnet. The renderer preserves the ARN/group and replaces the interface with a private primary interface with **no SubnetId**. The ASG selects either configured private subnet. Explicit disk/snapshot overrides are rejected pending review; v5 has none.
+## Ubuntu first boot
 
-Every new version uses `--source-version 5`, overriding ImageId, user data, tags, metadata and interface. `HttpTokens=required`, `HttpEndpoint=enabled`, and hop limit 1 are enforced. Neither v5 nor the default template version is edited. [AWS source-version behavior](https://docs.aws.amazon.com/cli/latest/reference/ec2/create-launch-template-version.html).
+Only Ubuntu Server 24.04 AMD64 is accepted. Ubuntu's signed apt archive installs `docker.io`, Python, curl, CA certificates, nftables, unzip and snapd. Docker is enabled and checked. Reviewed AWS binary artifacts are downloaded through HTTPS at fixed-version URLs and verified before installation:
 
-## Bootstrap and evidence
+| Artifact | Version | SHA256 |
+| --- | --- | --- |
+| AWS CLI ZIP | 2.37.5 | `850ba65f1342a1f725f4868de3c4621ea729af31dac96e54b574cbb0ef309029` |
+| Ubuntu CloudWatch DEB | 1.300073.2b1889-1 | `f25c81f42627ac481b51215e8e6f989208ab266f8b224ffd66a208061e790f1c` |
 
-Bootstrap accepts only AL2023 x86_64, installs Docker, `awscli-2`, Python, SSM Agent, CloudWatch Agent and nftables, and starts/checks the services. These package names were resolved against the official AL2023 repository. Existing outbound connectivity/endpoints must support package downloads, GitHub, ECR, Secrets Manager, SSM and CloudWatch.
+The review verified upstream signatures against fingerprints `FB5DB77FD5C118B80511ADA8A6310ACC4672475C` (AWS CLI) and `937616F3450B7D806CBD9725D58167303B789C72` (CloudWatch). To update, verify the new version's signature against AWS's documented fingerprint in an isolated keyring, update URLs/hashes and rerun tests/rehearsal. Never adopt an unverified checksum merely to pass bootstrap. [AWS CLI installation](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html), [CloudWatch verification](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/verify-CloudWatch-Agent-Package-Signature.html).
 
-A private `inet cloudops_bootstrap` firewall table blocks external port 5000 for both IP families while allowing loopback checks. Existing containers, runtime.env or a same-name firewall table cause failure. Runtime secrets are fetched without printing values; signing configuration is root-owned mode 0600, DATABASE_URL is not inherited, and the stable key is not rotated. `/cloudops/app` must already exist.
+Official Ubuntu EC2 AMIs normally include Snap SSM. Bootstrap waits for snap seeding, installs `amazon-ssm-agent --classic --channel=stable` if missing, enables it and checks **`snap.amazon-ssm-agent.amazon-ssm-agent.service`**. A competing deb agent fails validation. Jenkins requires SSM Online before submitting per-instance verification; authorization errors abort immediately. [AWS Ubuntu SSM instructions](https://docs.aws.amazon.com/systems-manager/latest/userguide/agent-install-ubuntu-64-snap.html).
 
-Checksum-pinned scripts from the exact source commit verify candidate 5001 and production 5000, `/health`, `/ready`, the application route, Docker health, configured ECR digest and actual Docker image ID. Only successful first boot writes a root-owned mode-0600 release marker and removes its firewall gate. ASG target registration stays automatic. Failure removes the marker, keeps traffic blocked, and stops/disables restart for this exact release's containers. Unknown containers and volumes are retained.
+Both subnets need outbound access/endpoints for Ubuntu archives, Snap Store, awscli.amazonaws.com, the CloudWatch download bucket, GitHub, ECR, Secrets Manager, SSM and CloudWatch. No routes/endpoints are changed here. `/cloudops/app` must already exist. Review startup timing against the current 300-second ASG grace period before approval.
 
-Per-instance SSM verification requires the release marker, exact image/version, health/readiness, Docker health and that instance's healthy ALB target. The independent healthy canary cannot count toward ASG readiness. API authorization errors fail immediately; numeric version/capacity rollback remains enabled.
+The nftables gate blocks external IPv4/IPv6 port 5000 while permitting loopback checks. Existing containers, inherited runtime.env or an existing gate table fail closed. Secrets are fetched through the EC2 role without printing values. Runtime settings are root-owned mode 0600, use the stable signing secret and never inherit DATABASE_URL. Secrets are not rotated; CloudWatch logging is retained.
 
-Before manual approval, `collect-cloudops-preflight.sh asg` calls `prepare-cloudops-asg.sh`. This performs only read-only discovery and local rendering. Restricted overrides remain in ignored `.deploy-work/`. Jenkins archives `reports/asg-launch-template-preview.json`, containing source v5, reviewed AMI/owner, ARN profile, security group, subnet-free interface, metadata options and user-data checksum/size/Bash validation. It never prints raw user data or secret values.
+Checksum-pinned deploy/verify scripts from the exact release commit check candidate 5001, production 5000, `/health`, `/ready`, the protected route, Docker health and exact ECR digest/runtime image ID. Only success writes a private release marker and opens port 5000. Failure keeps the gate closed, removes the marker and stops/disables restart only for this release's containers. Unknown containers and volumes are retained. Each ASG instance must pass SSM and its own ALB target-health checks; the independent healthy canary cannot count toward readiness.
 
-## Controlled commands after review
+## Jenkins IAM policy: operator action after review
 
-Use the approved Jenkins environment on merged `main`, with the existing `DevSecOpsToolsRole` identity and pipeline-populated commit/ECR variables. First run CI with `DEPLOY_TARGET=none`; Gitleaks, pytest, SonarQube/Quality Gate and Trivy must pass and the commit image must be published immutably. Review/apply the separate IAM policies if needed, including Jenkins public-parameter reads and the application's ECR, Secrets Manager, SSM, logging and region-restricted target-health permissions.
+The repository policy adds `ec2:RunInstances` for the pinned AMI, exact LT, both subnets and SG, restricted by region/LT. Generated instances require `t3.micro`, IMDSv2 and `Role=app`; generated volumes/interfaces remain region/LT restricted. `ec2:CreateTags` is limited to instance/volume tagging during RunInstances and approved keys: Role, Monitoring, Version, existing ASG Environment/Name/Project, and the AWS-managed autoscaling group tag. Read-only discovery verified the propagated values in `reviewed-ubuntu24.json`; permission probes merge those ASG tags with LT instance tags and reject drift. `iam:PassRole` remains limited to CloudOpsEC2Role and EC2. [AWS launch-template IAM guidance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/permissions-for-launch-templates.html).
 
-Read-only confirmation:
+**Do not perform the IAM write while preparing this PR.** After review, an authorized IAM administrator should inventory/back up current policies and inspect SCPs, boundaries and explicit denies. Apply this reviewed inline policy separately; it does not replace other attached policies or grant Jenkins IAM-edit permissions:
 
 ```bash
-aws autoscaling describe-auto-scaling-groups --region eu-north-1 \
-  --auto-scaling-group-names asg-cloudops-app \
-  --query 'AutoScalingGroups[0].{Capacity:[MinSize,DesiredCapacity,MaxSize],LaunchTemplate:LaunchTemplate,Subnets:VPCZoneIdentifier,HealthChecks:HealthCheckType}'
-aws ec2 describe-images --region eu-north-1 --owners amazon \
-  --image-ids ami-01e082ac2f79f3918 \
-  --query 'Images[0].{Image:ImageId,Owner:OwnerId,Name:Name,Architecture:Architecture,State:State}'
+aws iam get-role --role-name DevSecOpsToolsRole --query Role.Arn
+aws iam list-role-policies --role-name DevSecOpsToolsRole
+aws iam list-attached-role-policies --role-name DevSecOpsToolsRole
+# Authorized administrator, only after review:
+aws iam put-role-policy --role-name DevSecOpsToolsRole \
+  --policy-name CloudOpsReviewedAsgDeployment \
+  --policy-document file://deploy/iam/jenkins-cloudops-deploy-policy.json
 ```
 
-Select Jenkins `DEPLOY_TARGET=asg`, `ASG_AMI_REVIEWED=true`. Before its designated-approver input, Jenkins runs:
+An Allow does not override an explicit Deny. Audit other broad grants too. Use instance-role authentication; do not add static credentials. Application-role permissions remain separate.
+
+## Preview, permission validation and controlled deployment
+
+First run successful merged-main CI with `DEPLOY_TARGET=none`. Gitleaks, pytest, SonarQube/Quality Gate, Trivy and immutable ECR publication must pass. For the later rollout, use Jenkins's DevSecOpsToolsRole session and pipeline-supplied source commit/digest, `DEPLOY_TARGET=asg`, `ASG_AMI_REVIEWED=true` and designated `CLOUDOPS_DEPLOY_APPROVERS`.
+
+Before manual approval Jenkins runs:
 
 ```bash
 bash deploy/collect-cloudops-preflight.sh asg
 ```
 
-Inspect the archived preview, then approve through the restricted Jenkins input. Only afterward does Jenkins run:
+This renders and archives `reports/asg-launch-template-preview.json` and `reports/asg-launch-permissions.json` **before input**. Console and approval text link `$BUILD_URL/artifact/reports/asg-launch-template-preview.json`. The preview shows source v5, pinned Ubuntu ID/owner, profile, both subnets, SG, private interface, metadata and user-data checksum/size/Bash validation. It never includes raw user data or secrets. Private requests stay in ignored `.deploy-work/`.
+
+`validate-launch-permissions.sh 5` uses hard-coded `--dry-run` for LT-version creation and RunInstances in **each** subnet, explicitly overriding the unsafe v5 image. Only nonzero `DryRunOperation` is accepted. AccessDenied, unauthorized, throttling, malformed output or unexpected zero exit fail. Nothing launches. DryRun establishes authorization, not EC2 capacity or application readiness.
+
+After reviewing the artifacts and approving through the designated Jenkins input:
 
 ```bash
 ASG_AMI_REVIEWED=true bash deploy/cloudops-asg-rollout.sh
 ```
 
-That command creates a new numeric LT version from **5**, then performs the existing initial rollout to 1/2/2 and verifies both nodes. Later rollouts use a prior clean numeric version and Instance Refresh/automatic rollback. Do not scale the old v5 group separately. Observe deployment evidence, `/cloudops/app` logs, SSM and instance-specific target health. The existing ASG grace period is 300 seconds; review package/image startup timing against it before approval. Keep the healthy canary until a separate retirement review.
+This creates a numeric version from v5, repeats non-launching checks with that version, then performs the existing initial rollout to 1/2/2. Permission failure causes no capacity/refresh change. Later rollouts retain prior clean numeric version and Instance Refresh/rollback protection. Initial failure restores capacity 0/0/0; if read-only discovery confirms the original version/capacity are unchanged, it skips an unnecessary UpdateAutoScalingGroup. After an applied update, initial rollback drains to zero while retaining the clean numeric template, because the restricted policy excludes the contaminated v5 image and selecting it can fail authorization even at zero capacity. Unexpected concurrent template changes fail closed. Never scale old v5 separately. Keep the healthy canary until a separate retirement review.
 
-Tests simulate the complete rendered bootstrap and real deploy/verify code with mocked AWS/Docker/services, including failures and zero-capacity rollback. `python3 tests/integration/rehearse_al2023_gate.py` also exercises the exact firewall rules in disposable real AL2023 network namespaces, without AWS access or host port publication. This does not substitute for live EC2/systemd/RDS acceptance during the later controlled rollout. No instance, LT version, ASG capacity, secret, canary or RDS resource is changed while preparing this PR.
+## Validation limits
+
+Pytest simulates Ubuntu first boot, SSM availability, failure cleanup, runtime/image checks, both subnet dry runs and rollback. `python3 tests/integration/rehearse_ubuntu24_gate.py` exercises real Ubuntu apt installation, reviewed AWS binaries when supplied locally, and the exact firewall gate without AWS access, host sockets or host port publication. It cannot establish EC2 systemd/Snap registration or RDS/ALB acceptance; those remain controlled-rollout checks. Live Jenkins Declarative/SonarQube acceptance also remains required.
+
+No canary, RDS, secrets, live IAM policy, LT version or ASG capacity is modified while preparing this PR. No instance is launched.
