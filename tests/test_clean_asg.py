@@ -75,8 +75,9 @@ def test_public_parameter_provenance_cannot_move_silently():
     from cloudops_ami import validate_ami
     parameter = read_fixture("aws-reviewed-al2023-parameter.json")
     parameter["Parameter"]["Version"] += 1
+    document = read_fixture("aws-reviewed-al2023.json")
     with pytest.raises(ValueError, match="public SSM parameter"):
-        validate_ami(read_fixture("aws-reviewed-al2023.json"), parameter)
+        validate_ami(document, parameter)
 
 
 def test_asg_preflight_never_approves_launching_the_contaminated_image(tmp_path):
@@ -130,8 +131,10 @@ def test_launch_renderer_supports_exact_profile_name_or_arn(profile):
 def test_launch_renderer_rejects_unreviewed_profile_network_or_disk(change):
     source = read_fixture("cloudops-launch-template-v5.json")["LaunchTemplateData"]
     source.update(change)
+    renderer = load_helper("render-launch-template-data")
+    encoded = base64.b64encode(rendered_bootstrap().encode()).decode()
     with pytest.raises(ValueError):
-        load_helper("render-launch-template-data").render(source, base64.b64encode(rendered_bootstrap().encode()).decode(), COMMIT[:12])
+        renderer.render(source, encoded, COMMIT[:12])
 
 
 def first_boot_deploy(host):
