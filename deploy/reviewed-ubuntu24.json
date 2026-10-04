@@ -1,0 +1,30 @@
+{
+  "region": "eu-north-1",
+  "image_id": "ami-0769f265f707fecc8",
+  "owner_id": "099720109477",
+  "owner_alias": "amazon",
+  "name": "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260923",
+  "architecture": "x86_64",
+  "creation_date": "2026-09-23T11:57:01.000Z",
+  "ssm_parameter": "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
+  "ssm_parameter_version": 77,
+  "review_date": "2026-10-04",
+  "source_template_version": 5,
+  "rejected_image_id": "ami-09b67ca726bea7328",
+  "application_security_group": "sg-0f9613afd389c288d",
+  "instance_profile_arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role",
+  "image_location": "amazon/ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260923",
+  "image_ssm_parameter": "aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id",
+  "root_snapshot_id": "snap-018e23b01d6c25622",
+  "private_subnets": [
+    "subnet-08469c4e69b5c4d65",
+    "subnet-05788ba98ca1096e6"
+  ],
+  "asg_propagated_tags": {
+    "Environment": "Interview-Lab",
+    "Monitoring": "enabled",
+    "Name": "cloudops-asg-app",
+    "Project": "ApexForge-CloudOps",
+    "Role": "app"
+  }
+}

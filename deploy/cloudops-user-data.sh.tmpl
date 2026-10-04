@@ -39,49 +39,42 @@ readonly VERIFY_SCRIPT_SHA256="@@VERIFY_SCRIPT_SHA256@@"
 [[ "$IMAGE_URI" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]
 [[ "$APP_VERSION" =~ ^[0-9a-f]{12,40}$ ]]
 [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-# This bootstrap is reviewed exclusively for official AL2023 x86_64.
+# This bootstrap is reviewed exclusively for official Ubuntu Server 24.04 AMD64.
 # shellcheck disable=SC1091
 source /etc/os-release
-[[ "$ID" == amzn && "$VERSION_ID" == 2023 && "$(uname -m)" == x86_64 ]]
+[[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 && "$(uname -m)" == x86_64 ]]
 
-if command -v dnf >/dev/null 2>&1; then
-    dnf install -y docker awscli-2 curl-minimal python3 amazon-ssm-agent amazon-cloudwatch-agent nftables
-elif command -v yum >/dev/null 2>&1; then
-    if command -v amazon-linux-extras >/dev/null 2>&1; then
-        amazon-linux-extras install -y docker
-    else
-        yum install -y docker
-    fi
-    yum install -y awscli curl python3 amazon-ssm-agent
-    cpu_arch="$(uname -m)"
-    case "$cpu_arch" in
-        x86_64) cw_arch=amd64 ;;
-        aarch64) cw_arch=arm64 ;;
-        *) printf 'Unsupported CloudWatch Agent architecture: %s\n' "$cpu_arch" >&2; exit 1 ;;
-    esac
-    curl --fail --silent --show-error --location "https://amazoncloudwatch-agent.s3.amazonaws.com/amazon_linux/${cw_arch}/latest/amazon-cloudwatch-agent.rpm" -o /tmp/amazon-cloudwatch-agent.rpm
-    yum install -y /tmp/amazon-cloudwatch-agent.rpm
-    rm -f /tmp/amazon-cloudwatch-agent.rpm
-elif command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y --no-install-recommends docker.io awscli curl python3 ca-certificates
-    dpkg_arch="$(dpkg --print-architecture)"
-    case "$dpkg_arch" in
-        amd64) ssm_arch=debian_amd64; cw_arch=amd64 ;;
-        arm64) ssm_arch=debian_arm64; cw_arch=arm64 ;;
-        *) printf 'Unsupported Debian architecture: %s\n' "$dpkg_arch" >&2; exit 1 ;;
-    esac
-    curl --fail --silent --show-error --location "https://s3.${AWS_REGION}.amazonaws.com/amazon-ssm-${AWS_REGION}/latest/${ssm_arch}/amazon-ssm-agent.deb" -o /tmp/amazon-ssm-agent.deb
-    dpkg -i /tmp/amazon-ssm-agent.deb
-    rm -f /tmp/amazon-ssm-agent.deb
-    curl --fail --silent --show-error --location "https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/${cw_arch}/latest/amazon-cloudwatch-agent.deb" -o /tmp/amazon-cloudwatch-agent.deb
-    dpkg -i /tmp/amazon-cloudwatch-agent.deb
-    rm -f /tmp/amazon-cloudwatch-agent.deb
-else
-    printf 'Unsupported Linux image: install Docker, AWS CLI v2-compatible ECR commands, SSM Agent, and CloudWatch Agent in a reviewed AMI.\n' >&2
-    exit 1
+# Ubuntu packages are authenticated by apt. AWS binary hashes below were
+# reviewed against upstream signatures; changing them requires a new review.
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends docker.io python3 curl ca-certificates nftables unzip snapd
+rm -rf /var/lib/apt/lists/*
+tmp_dir="$(mktemp -d /run/cloudops-bootstrap.XXXXXX)"
+trap 'rm -rf -- "$tmp_dir"' EXIT
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.37.5.zip -o "$tmp_dir/awscliv2.zip"
+printf '%s  %s\n' 850ba65f1342a1f725f4868de3c4621ea729af31dac96e54b574cbb0ef309029 "$tmp_dir/awscliv2.zip" | sha256sum --check --status
+unzip -q "$tmp_dir/awscliv2.zip" -d "$tmp_dir"
+"$tmp_dir/aws/install" --install-dir /usr/local/aws-cli --bin-dir /usr/local/bin
+aws --version 2>&1 | grep -F 'aws-cli/2.37.5 ' >/dev/null
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/1.300073.2b1889/amazon-cloudwatch-agent.deb -o "$tmp_dir/amazon-cloudwatch-agent.deb"
+printf '%s  %s\n' f25c81f42627ac481b51215e8e6f989208ab266f8b224ffd66a208061e790f1c "$tmp_dir/amazon-cloudwatch-agent.deb" | sha256sum --check --status
+dpkg -i "$tmp_dir/amazon-cloudwatch-agent.deb"
+# Official Ubuntu AMIs use Snap SSM. Refuse a competing deb agent.
+if dpkg-query -W -f='${Status}' amazon-ssm-agent 2>/dev/null | grep -Fx 'install ok installed' >/dev/null; then
+    printf 'Competing deb SSM Agent detected; refusing ambiguous agent setup.\n' >&2
+    false
 fi
+systemctl enable --now snapd.socket
+timeout 180 snap wait system seed.loaded
+if ! snap list amazon-ssm-agent >/dev/null 2>&1; then
+    snap install amazon-ssm-agent --classic --channel=stable
+fi
+snap start --enable amazon-ssm-agent
+systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+systemctl is-active --quiet snap.amazon-ssm-agent.amazon-ssm-agent.service
 
 # Gate both IPv4 and IPv6 ALB traffic until the exact new application passes.
 # Loopback stays available for local readiness verification. A pre-existing table
@@ -90,9 +83,7 @@ nft add table inet cloudops_bootstrap
 nft 'add chain inet cloudops_bootstrap input { type filter hook input priority -10; policy accept; }'
 nft 'add rule inet cloudops_bootstrap input iifname != "lo" tcp dport 5000 reject'
 systemctl enable --now docker
-systemctl enable --now amazon-ssm-agent
 systemctl is-active --quiet docker
-systemctl is-active --quiet amazon-ssm-agent
 containers="$(docker ps --all --quiet --no-trunc)"
 [[ -z "$containers" ]] || { printf 'Clean first boot found existing containers; refusing reuse.\n' >&2; false; }
 [[ ! -e /etc/cloudops/runtime.env ]] || { printf 'Clean first boot found inherited runtime configuration; refusing reuse.\n' >&2; false; }
@@ -146,8 +137,6 @@ aws logs describe-log-groups --region "$AWS_REGION" --log-group-name-prefix "$LO
 systemctl enable amazon-cloudwatch-agent
 systemctl is-active --quiet amazon-cloudwatch-agent
 
-tmp_dir="$(mktemp -d /run/cloudops-bootstrap.XXXXXX)"
-trap 'rm -rf -- "$tmp_dir"' EXIT
 curl --fail --silent --show-error --location "$RAW_BASE/cloudops-deploy.sh" -o "$tmp_dir/cloudops-deploy.sh"
 curl --fail --silent --show-error --location "$RAW_BASE/cloudops-verify.sh" -o "$tmp_dir/cloudops-verify.sh"
 printf '%s  %s\n' "$DEPLOY_SCRIPT_SHA256" "$tmp_dir/cloudops-deploy.sh" | sha256sum --check --status

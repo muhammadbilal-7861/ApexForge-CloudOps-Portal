@@ -2,10 +2,10 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "VerifyReviewedPublicAmazonLinuxImage",
+      "Sid": "VerifyReviewedPublicCanonicalImage",
       "Effect": "Allow",
       "Action": "ssm:GetParameter",
-      "Resource": "arn:aws:ssm:eu-north-1::parameter/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64",
+      "Resource": "arn:aws:ssm:eu-north-1::parameter/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
       "Condition": {"StringEquals": {"aws:RequestedRegion": "eu-north-1"}}
     },
     {
@@ -55,6 +55,67 @@
       "Effect": "Allow",
       "Action": "ec2:CreateLaunchTemplateVersion",
       "Resource": "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1"
+    },
+    {
+      "Sid": "LaunchOnlyReviewedCloudOpsResources",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:eu-north-1::image/ami-0769f265f707fecc8",
+        "arn:aws:ec2:eu-north-1:489502663059:subnet/subnet-08469c4e69b5c4d65",
+        "arn:aws:ec2:eu-north-1:489502663059:subnet/subnet-05788ba98ca1096e6",
+        "arn:aws:ec2:eu-north-1:489502663059:security-group/sg-0f9613afd389c288d",
+        "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-north-1",
+          "ec2:LaunchTemplate": "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1"
+        }
+      }
+    },
+    {
+      "Sid": "LaunchOnlyTaggedT3MicroWithImdsv2",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:eu-north-1:489502663059:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-north-1",
+          "ec2:LaunchTemplate": "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1",
+          "ec2:InstanceType": "t3.micro",
+          "ec2:MetadataHttpTokens": "required",
+          "aws:RequestTag/Role": "app"
+        }
+      }
+    },
+    {
+      "Sid": "LaunchCloudOpsGeneratedVolumesAndInterfaces",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:eu-north-1:489502663059:volume/*",
+        "arn:aws:ec2:eu-north-1:489502663059:network-interface/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-north-1",
+          "ec2:LaunchTemplate": "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1"
+        }
+      }
+    },
+    {
+      "Sid": "TagOnlyCloudOpsResourcesDuringLaunch",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:eu-north-1:489502663059:instance/*",
+        "arn:aws:ec2:eu-north-1:489502663059:volume/*"
+      ],
+      "Condition": {
+        "StringEquals": {"aws:RequestedRegion": "eu-north-1", "ec2:CreateAction": "RunInstances"},
+        "ForAllValues:StringEquals": {"aws:TagKeys": ["Role", "Monitoring", "Version", "Environment", "Name", "Project", "aws:autoscaling:groupName"]}
+      }
     },
     {
       "Sid": "PassOnlyCloudOpsAppRoleToEc2",
