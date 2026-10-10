@@ -199,13 +199,9 @@ aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$DB_SECR
 log 'Database secret schema validated without persisting or printing its value.'
 
 log 'Checking the pre-created CloudWatch log group and recording a complete container inventory.'
-log_group="$(aws logs describe-log-groups --region "$AWS_REGION" --log-group-name-prefix /cloudops/app --query "logGroups[?logGroupName=='/cloudops/app'].logGroupName | [0]" --output text)"
-[[ "$log_group" == /cloudops/app ]] || fail 'pre-created /cloudops/app log group is unavailable to the EC2 role.'
+log_group="$(aws logs describe-log-groups --region "$AWS_REGION" --log-group-name-prefix "$LOG_GROUP_NAME" --query "logGroups[?logGroupName=='${LOG_GROUP_NAME}'].logGroupName | [0]" --output text)"
+[[ "$log_group" == "$LOG_GROUP_NAME" ]] || fail 'pre-created /cloudops/app log group is unavailable to the EC2 role.'
 docker ps -a --format 'container name={{.Names}} image={{.Image}}'
-if [[ "${CLOUDOPS_FIRST_BOOT:-false}" == true ]]; then
-    first_boot_inventory="$(docker ps --all --quiet --no-trunc)" || fail 'first-boot container inventory failed.'
-    [[ -z "$first_boot_inventory" ]] || fail 'clean first boot requires no existing containers; legacy reuse is forbidden.'
-fi
 
 previous_id=""
 previous_name=""
@@ -253,7 +249,10 @@ else
 fi
 
 if [[ -n "$target_group_arn" && -z "$previous_id" ]]; then
-    fail 'canary cutover requires the existing managed container or exact inventoried cloudops-flask:1.1 container.'
+    [[ "${ALLOW_INITIAL_INSTALL:-false}" == true ]] || fail 'initial installation requires explicit ALLOW_INITIAL_INSTALL=true in the approved inventory.'
+    initial_inventory="$(docker ps --all --quiet --no-trunc)" || fail 'initial container inventory failed.'
+    [[ -z "$initial_inventory" ]] || fail 'initial installation requires an empty Docker container inventory; unknown containers were not changed.'
+    log 'Approved initial installation on an empty host; there is no previous application to restore.'
 fi
 
 if [[ "$previous_kind" == legacy ]]; then

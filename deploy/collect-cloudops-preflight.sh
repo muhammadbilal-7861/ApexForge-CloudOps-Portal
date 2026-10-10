@@ -4,8 +4,8 @@ set +x
 # Validated non-secret inventory is required even for read-only AWS operations.
 source "${WORKSPACE:?}/deploy/load-config.sh"
 
-if (($# != 1)) || [[ "$1" != canary && "$1" != asg ]]; then
-    printf 'Usage: %s canary|asg\n' "$0" >&2
+if (($# != 1)) || [[ "$1" != canary ]]; then
+    printf 'Usage: %s canary\n' "$0" >&2
     exit 2
 fi
 mode="$1"
@@ -46,37 +46,9 @@ aws_cli logs describe-log-groups --log-group-name-prefix "${LOG_GROUP_NAME}" --o
 obs_sgs="$(aws_cli ec2 describe-instances --instance-ids "${OBSERVABILITY_INSTANCE_ID}" --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text)"
 alb_sgs="$(aws_cli elbv2 describe-load-balancers --names "${ALB_NAME}" --query 'LoadBalancers[0].SecurityGroups' --output text)"
 
-if [[ "$mode" == canary ]]; then
     aws_cli ec2 describe-instances --instance-ids "${CANARY_INSTANCE_ID}" --output json > "$work_dir/canary-instance.json"
     aws_cli ssm describe-instance-information --filters "Key=InstanceIds,Values=${CANARY_INSTANCE_ID}" --output json > "$work_dir/canary-ssm.json"
     app_sgs="$(aws_cli ec2 describe-instances --instance-ids "${CANARY_INSTANCE_ID}" --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text)"
-else
-    aws_cli autoscaling describe-auto-scaling-groups --auto-scaling-group-names "${ASG_NAME}" --output json > "$work_dir/asg.json"
-    launch_version="$(aws_cli autoscaling describe-auto-scaling-groups --auto-scaling-group-names "${ASG_NAME}" --query 'AutoScalingGroups[0].LaunchTemplate.Version' --output text)"
-    if [[ ! "$launch_version" =~ ^[0-9]+$ ]]; then
-        printf 'ASG does not select an explicit numeric launch-template version.\n' >&2
-        exit 1
-    fi
-    # Persist only reviewed, non-secret LT attributes. AWS UserData can contain sensitive material.
-    aws_cli ec2 describe-launch-template-versions \
-        --launch-template-id "${LAUNCH_TEMPLATE_ID}" \
-        --versions "$launch_version" \
-        --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:LaunchTemplateData.{ImageId:ImageId,InstanceType:InstanceType,IamInstanceProfile:IamInstanceProfile,SecurityGroupIds:SecurityGroupIds,NetworkInterfaces:NetworkInterfaces,MetadataOptions:MetadataOptions,TagSpecifications:TagSpecifications,BlockDeviceMappings:BlockDeviceMappings,Placement:Placement}}' \
-        --output json > "$work_dir/launch-template.json"
-    # v5 is an immutable configuration source only; never reuse its AMI/UserData.
-    aws_cli ec2 describe-launch-template-versions --launch-template-id "${LAUNCH_TEMPLATE_ID}" --versions 5 \
-        --query 'LaunchTemplateVersions[0].{VersionNumber:VersionNumber,LaunchTemplateData:LaunchTemplateData.{ImageId:ImageId,InstanceType:InstanceType,IamInstanceProfile:IamInstanceProfile,SecurityGroupIds:SecurityGroupIds,NetworkInterfaces:NetworkInterfaces,MetadataOptions:MetadataOptions,TagSpecifications:TagSpecifications,BlockDeviceMappings:BlockDeviceMappings,Placement:Placement}}' \
-        --output json > "$work_dir/launch-template-source.json"
-    reviewed_ami="$REVIEWED_AMI_ID"
-    reviewed_parameter="$REVIEWED_SSM_PARAMETER"
-    aws_cli ec2 describe-images --image-ids "$reviewed_ami" --owners 099720109477 --output json > "$work_dir/reviewed-ami.json"
-    aws_cli ssm get-parameter --name "$reviewed_parameter" --output json > "$work_dir/reviewed-ami-parameter.json"
-    app_sgs="$(aws_cli ec2 describe-launch-template-versions --launch-template-id "${LAUNCH_TEMPLATE_ID}" --versions "$launch_version" --query 'LaunchTemplateVersions[0].LaunchTemplateData.SecurityGroupIds' --output text)"
-    if [[ "$app_sgs" == None ]]; then
-        app_sgs="$(aws_cli ec2 describe-launch-template-versions --launch-template-id "${LAUNCH_TEMPLATE_ID}" --versions "$launch_version" --query 'LaunchTemplateVersions[0].LaunchTemplateData.NetworkInterfaces[].Groups[]' --output text)"
-    fi
-fi
-
 read -r -a group_array <<< "$alb_sgs $obs_sgs $app_sgs"
 aws_cli ec2 describe-security-groups --group-ids "${group_array[@]}" --output json > "$work_dir/security-groups.json"
 
@@ -93,12 +65,4 @@ docker run --rm \
 if [[ "$mode" == canary ]]; then
     # SSM Run Command performs secret-safe checks using the target instance role before approval.
     bash deploy/cloudops-ssm-deploy.sh preflight "${CANARY_INSTANCE_ID}"
-fi
-if [[ "$mode" == asg ]]; then
-    if [[ -n "${ASG_VALIDATED_VERSION:-}" ]]; then
-        # After approval, refresh discovery without creating another candidate.
-        bash deploy/validate-launch-permissions.sh "$ASG_VALIDATED_VERSION"
-    else
-        bash deploy/prepare-cloudops-asg.sh
-    fi
 fi

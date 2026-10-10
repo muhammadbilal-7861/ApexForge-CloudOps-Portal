@@ -8,15 +8,16 @@ import json
 import sys
 from pathlib import Path
 
-from cloudops_ami import REVIEW, CONFIG, validate_ami, validate_source
+from cloudops_config import load
+
+CONFIG = load()
 
 
 EXPECTED = {
     "region": CONFIG["AWS_REGION"], "account": CONFIG["AWS_ACCOUNT_ID"],
     "vpc": CONFIG["VPC_ID"], "app_subnets": set(CONFIG["PRIVATE_SUBNET_IDS"]),
     "alb_name": CONFIG["ALB_NAME"], "target_group_name": CONFIG["TARGET_GROUP_NAME"],
-    "target_group_port": 5000, "target_group_path": "/ready", "asg_name": CONFIG["ASG_NAME"],
-    "launch_template_id": CONFIG["LAUNCH_TEMPLATE_ID"], "ami_id": REVIEW["image_id"],
+    "target_group_port": 5000, "target_group_path": "/ready",
     "canary_instance_id": CONFIG["CANARY_INSTANCE_ID"],
     "observability_instance_id": CONFIG["OBSERVABILITY_INSTANCE_ID"],
     "instance_profile": CONFIG["INSTANCE_PROFILE_NAME"], "log_group": CONFIG["LOG_GROUP_NAME"],
@@ -112,9 +113,18 @@ def validate_common(directory: Path, mode: str) -> tuple[str, list[str]]:
     )
     if target_group.get("TargetGroupArn") not in reachable:
         raise PreflightError("alb-load listeners/rules do not forward to tg-cloudops-app")
-    db_status = read_json(directory, "rds.json").get("DBInstances", [{}])[0].get("DBInstanceStatus")
-    if db_status != "available":
-        raise PreflightError("database-1 is not available; deployment/readiness checks are blocked until RDS is healthy")
+    database = one(read_json(directory, "rds.json").get("DBInstances", []), "MariaDB instance")
+    if (database.get("DBInstanceIdentifier") != CONFIG["RDS_INSTANCE_ID"] or
+            database.get("DBInstanceStatus") != "available" or database.get("Engine") != "mariadb" or
+            database.get("MultiAZ") is not False or database.get("PubliclyAccessible") is not False):
+        raise PreflightError("expected one available private Single-AZ MariaDB instance")
+    db_group = database.get("DBSubnetGroup", {})
+    db_subnets = db_group.get("Subnets", [])
+    if (db_group.get("VpcId") != EXPECTED["vpc"] or len(db_subnets) != 2 or
+            len({item.get("SubnetIdentifier") for item in db_subnets}) != 2 or
+            len({item.get("SubnetAvailabilityZone", {}).get("Name") for item in db_subnets}) != 2 or
+            any(not item.get("SubnetIdentifier") or not item.get("SubnetAvailabilityZone", {}).get("Name") for item in db_subnets)):
+        raise PreflightError("DB subnet group must contain two distinct subnets in two AZs in the approved VPC")
     log_groups = read_json(directory, "logs.json").get("logGroups", [])
     if not any(item.get("logGroupName") == EXPECTED["log_group"] for item in log_groups):
         raise PreflightError("pre-created /cloudops/app CloudWatch log group is missing")
@@ -130,73 +140,33 @@ def validate_common(directory: Path, mode: str) -> tuple[str, list[str]]:
         group.get("GroupId"): group
         for group in read_json(directory, "security-groups.json").get("SecurityGroups", [])
     }
-    if mode == "canary":
-        app_instance = instance_from(read_json(directory, "canary-instance.json"), EXPECTED["canary_instance_id"])
-        if app_instance.get("State", {}).get("Name") != "running":
-            raise PreflightError("canary EC2 is not running; start and prepare the existing instance, then wait for SSM Online. Pipeline will not start it automatically.")
-        if app_instance.get("VpcId") != EXPECTED["vpc"] or app_instance.get("SubnetId") not in EXPECTED["app_subnets"]:
-            raise PreflightError("canary EC2 is outside the approved private application subnets")
-        if app_instance.get("MetadataOptions", {}).get("HttpTokens") != "required":
-            raise PreflightError("canary EC2 must require IMDSv2 before using its instance role from the host-network container")
-        if profile_name(app_instance) != EXPECTED["instance_profile"]:
-            raise PreflightError("canary EC2 is not using the expected ExampleAppRole instance profile")
-        ping = read_json(directory, "canary-ssm.json").get("InstanceInformationList", [])
-        if len(ping) != 1 or ping[0].get("PingStatus") != "Online":
-            raise PreflightError("canary SSM agent is not Online; prepare/repair SSM before requesting deployment")
-        app_sgs = {item["GroupId"] for item in app_instance.get("SecurityGroups", [])}
-    else:
-        asg = one(read_json(directory, "asg.json").get("AutoScalingGroups", []), "Auto Scaling group")
-        if asg.get("AutoScalingGroupName") != EXPECTED["asg_name"]:
-            raise PreflightError("unexpected Auto Scaling group")
-        if asg.get("HealthCheckType") != "ELB":
-            raise PreflightError("ASG must use ELB health checks for readiness gating")
-        subnet_ids = set((asg.get("VPCZoneIdentifier") or "").split(","))
-        if subnet_ids != EXPECTED["app_subnets"]:
-            raise PreflightError("ASG subnets differ from the two approved private subnets")
-        if target_group.get("TargetGroupArn") not in asg.get("TargetGroupARNs", []):
-            raise PreflightError("ASG is not attached to the existing tg-cloudops-app")
-        launch_template = asg.get("LaunchTemplate", {})
-        if launch_template.get("LaunchTemplateId") != EXPECTED["launch_template_id"]:
-            raise PreflightError("ASG does not use the expected launch template")
-        version = str(launch_template.get("Version", ""))
-        if not version.isdigit():
-            raise PreflightError("ASG launch template version must be an explicit numeric version")
-        template = read_json(directory, "launch-template.json")
-        data = template.get("LaunchTemplateData", {})
-        if str(template.get("VersionNumber")) != version:
-            raise PreflightError("launch-template snapshot is not the version currently used by the ASG")
-        try:
-            validate_ami(read_json(directory, "reviewed-ami.json"), read_json(directory, "reviewed-ami-parameter.json"))
-            validate_source(data)
-            source = read_json(directory, "launch-template-source.json")
-            if source.get("VersionNumber") != 5 or source.get("LaunchTemplateData", {}).get("ImageId") != REVIEW["rejected_image_id"]:
-                raise ValueError("source must be inventoried immutable version 5; its image is never reused")
-            validate_source(source["LaunchTemplateData"])
-        except ValueError as exc:
-            raise PreflightError(str(exc)) from exc
-        capacities = (asg.get("MinSize"), asg.get("DesiredCapacity"), asg.get("MaxSize"))
-        if data.get("ImageId") == REVIEW["rejected_image_id"]:
-            if version != "5" or capacities != (0, 0, 0):
-                raise PreflightError("contaminated source AMI is allowed only as an idle 0/0/0 source; never launch or roll back into it")
-        elif data.get("ImageId") != EXPECTED["ami_id"]:
-            raise PreflightError("ASG does not use the reviewed clean AMI")
-        elif any((data.get("MetadataOptions") or {}).get(key) != value for key, value in
-                 {"HttpTokens": "required", "HttpEndpoint": "enabled", "HttpPutResponseHopLimit": 1}.items()):
-            raise PreflightError("running clean ASG template must require IMDSv2")
-        if data.get("ImageId") == EXPECTED["ami_id"]:
-            if data.get("Placement") or data.get("SubnetId"):
-                raise PreflightError("clean ASG template must not restrict Availability Zone or subnet")
-            for interface in (data.get("NetworkInterfaces") or []):
-                if interface.get("SubnetId") or interface.get("AssociatePublicIpAddress") is not False:
-                    raise PreflightError("clean ASG template must leave subnet selection to the ASG and disable public IPs")
-        app_sgs = set(data.get("SecurityGroupIds") or [])
-        for interface in (data.get("NetworkInterfaces") or []):
-            app_sgs.update(interface.get("Groups", []))
-        if not app_sgs:
-            raise PreflightError("launch template has no identifiable application security group")
-        if capacities not in ((0, 0, 0),) and not (0 <= capacities[0] <= capacities[1] <= capacities[2]):
-            raise PreflightError("ASG capacity values are inconsistent")
+    app_instance = instance_from(read_json(directory, "canary-instance.json"), EXPECTED["canary_instance_id"])
+    if app_instance.get("State", {}).get("Name") != "running":
+        raise PreflightError("canary EC2 is not running; start and prepare the existing instance, then wait for SSM Online. Pipeline will not start it automatically.")
+    if app_instance.get("VpcId") != EXPECTED["vpc"] or app_instance.get("SubnetId") not in EXPECTED["app_subnets"]:
+        raise PreflightError("canary EC2 is outside the approved private application subnets")
+    if app_instance.get("MetadataOptions", {}).get("HttpTokens") != "required":
+        raise PreflightError("canary EC2 must require IMDSv2 before using its instance role from the host-network container")
+    if profile_name(app_instance) != EXPECTED["instance_profile"]:
+        raise PreflightError("canary EC2 is not using the expected ExampleAppRole instance profile")
+    ping = read_json(directory, "canary-ssm.json").get("InstanceInformationList", [])
+    if len(ping) != 1 or ping[0].get("PingStatus") != "Online":
+        raise PreflightError("canary SSM agent is not Online; prepare/repair SSM before requesting deployment")
+    app_sgs = {item["GroupId"] for item in app_instance.get("SecurityGroups", [])}
 
+    if app_instance.get("PublicIpAddress") or app_instance.get("PublicDnsName"):
+        raise PreflightError("application EC2 must not have a public address")
+    if app_sgs != {CONFIG["APP_SECURITY_GROUP_ID"]}:
+        raise PreflightError("application security group differs from the approved inventory")
+    if app_instance.get("IamInstanceProfile", {}).get("Arn") != CONFIG["INSTANCE_PROFILE_ARN"]:
+        raise PreflightError("application instance profile ARN differs from the approved inventory")
+    for group in group_map.values():
+        for permission in group.get("IpPermissions", []):
+            if permission.get("IpProtocol") == "-1" or (
+                permission.get("IpProtocol") in ("tcp", "6") and
+                permission.get("FromPort", 65536) <= 22 <= permission.get("ToPort", -1)
+            ):
+                raise PreflightError("SSH ingress is forbidden; use SSM Session Manager")
     if not app_sgs.issubset(group_map):
         raise PreflightError("one or more application security groups were not inventoried")
     observed_sources = port_5000_sources([group_map[group_id] for group_id in app_sgs])
@@ -210,7 +180,7 @@ def validate_common(directory: Path, mode: str) -> tuple[str, list[str]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("canary", "asg"), required=True)
+    parser.add_argument("--mode", choices=("canary",), required=True)
     parser.add_argument("--input-dir", type=Path, required=True)
     args = parser.parse_args()
     try:

@@ -4,15 +4,15 @@ set +x
 # Validated non-secret inventory is required even for read-only AWS operations.
 source "${WORKSPACE:?}/deploy/load-config.sh"
 
-if (($# < 2)); then
-    printf 'Usage: %s preflight|deploy|verify INSTANCE_ID [INSTANCE_ID ...]\n' "$0" >&2
+if (($# != 2)); then
+    printf 'Usage: %s preflight|deploy|verify INSTANCE_ID\n' "$0" >&2
     exit 2
 fi
 mode="$1"
 shift
 [[ "$mode" == preflight || "$mode" == deploy || "$mode" == verify ]] || { printf 'Mode must be preflight, deploy, or verify.\n' >&2; exit 2; }
 instance_ids=("$@")
-if [[ "$mode" == deploy && ${#instance_ids[@]} -ne 1 ]]; then
+if [[ ${#instance_ids[@]} -ne 1 || "${instance_ids[0]}" != "$CANARY_INSTANCE_ID" ]]; then
     printf 'A canary deployment must target exactly one EC2 instance.\n' >&2
     exit 2
 fi
@@ -104,9 +104,7 @@ render_args=(
 if [[ "$mode" == verify || "$mode" == deploy ]]; then
     render_args+=(--require-target-healthy)
 fi
-if [[ "${CLOUDOPS_REQUIRE_BOOTSTRAP_COMPLETE:-false}" == true ]]; then
-    render_args+=(--require-bootstrap-complete)
-fi
+
 docker run --rm \
     --volumes-from jenkins \
     --user "$(id -u):$(id -g)" \

@@ -15,26 +15,20 @@ PATTERNS = {
     "INSTANCE_PROFILE_NAME": r"[A-Za-z0-9+=,.@_-]{1,64}",
     "ECR_REPOSITORY": r"[a-z0-9]+(?:[._/-][a-z0-9]+)*",
     "VPC_ID": r"vpc-[0-9a-f]{17}", "APP_SECURITY_GROUP_ID": r"sg-[0-9a-f]{17}",
-    "LAUNCH_TEMPLATE_ID": r"lt-[0-9a-f]{17}",
     "CANARY_INSTANCE_ID": r"i-[0-9a-f]{17}", "OBSERVABILITY_INSTANCE_ID": r"i-[0-9a-f]{17}",
     "SOURCE_REPOSITORY": r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
     "SESSION_COOKIE_SECURE": r"true|false",
+    "ALLOW_INITIAL_INSTALL": r"true|false",
     "LEGACY_CONTAINER_NAME": r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",
     "LEGACY_IMAGE": r"[A-Za-z0-9_./:-]+",
 }
-NAMES = ("ASG_NAME", "TARGET_GROUP_NAME", "ALB_NAME", "RDS_INSTANCE_ID",
+NAMES = ("TARGET_GROUP_NAME", "ALB_NAME", "RDS_INSTANCE_ID",
          "DB_SECRET_NAME", "SESSION_SECRET_NAME", "LOG_GROUP_NAME")
-REVIEW_KEYS = {
-    "region", "image_id", "owner_id", "owner_alias", "name", "architecture", "creation_date",
-    "ssm_parameter", "ssm_parameter_version", "review_date", "source_template_version",
-    "rejected_image_id", "application_security_group", "instance_profile_arn", "image_location",
-    "image_ssm_parameter", "root_snapshot_id", "private_subnets", "asg_propagated_tags",
-}
 
 
 def validate(document: dict, *, allow_example: bool = False) -> dict:
     required = set(PATTERNS) | set(NAMES) | {
-        "example_only", "INSTANCE_PROFILE_ARN", "TARGET_GROUP_ARN", "PRIVATE_SUBNET_IDS", "reviewed_ami"}
+        "example_only", "INSTANCE_PROFILE_ARN", "TARGET_GROUP_ARN", "PRIVATE_SUBNET_IDS"}
     if not isinstance(document, dict) or set(document) != required:
         raise ValueError("deployment configuration has missing or unknown fields")
     if not isinstance(document["example_only"], bool):
@@ -61,45 +55,6 @@ def validate(document: dict, *, allow_example: bool = False) -> dict:
         raise ValueError("invalid private subnet ID")
     if len(set(subnets)) != 2:
         raise ValueError("private subnet IDs must be distinct")
-    review = document["reviewed_ami"]
-    if not isinstance(review, dict) or set(review) != REVIEW_KEYS:
-        raise ValueError("reviewed AMI provenance is incomplete")
-    for key, expected in {"region": region, "owner_id": "099720109477", "architecture": "x86_64",
-                          "application_security_group": document["APP_SECURITY_GROUP_ID"],
-                          "instance_profile_arn": profile, "private_subnets": subnets,
-                          "source_template_version": 5}.items():
-        if review[key] != expected:
-            raise ValueError(f"AMI inventory mismatch: {key}")
-    for key, prefix in (("image_id", "ami"), ("rejected_image_id", "ami"), ("root_snapshot_id", "snap")):
-        if not isinstance(review[key], str) or not re.fullmatch(prefix + r"-[0-9a-f]{17}", review[key]):
-            raise ValueError(f"invalid reviewed provenance: {key}")
-    if review["image_id"] == review["rejected_image_id"]:
-        raise ValueError("reviewed image must differ from the rejected source image")
-    parameter = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
-    if review["ssm_parameter"] != parameter or type(review["ssm_parameter_version"]) is not int or review["ssm_parameter_version"] < 1:
-        raise ValueError("Canonical parameter provenance is invalid")
-    if review["owner_alias"] != "amazon" or not isinstance(review["name"], str) or not re.fullmatch(
-            r"ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24\.04-amd64-server-[0-9]{8}", review["name"]):
-        raise ValueError("review must select official Ubuntu 24.04 AMD64 gp3 provenance")
-    if review["image_location"] != "amazon/" + review["name"]:
-        raise ValueError("image location differs from reviewed public provenance")
-    if review["image_ssm_parameter"] != "aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id":
-        raise ValueError("image public parameter provenance is invalid")
-    from datetime import datetime
-    for key in ("creation_date", "review_date"):
-        if not isinstance(review[key], str):
-            raise ValueError("invalid provenance date")
-        try:
-            datetime.fromisoformat(review[key].replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError("invalid provenance date") from exc
-    tags = review["asg_propagated_tags"]
-    if not isinstance(tags, dict) or set(tags) != {"Environment", "Monitoring", "Name", "Project", "Role"}:
-        raise ValueError("approved ASG tags are incomplete")
-    if tags["Role"] != "app" or tags["Monitoring"] != "enabled":
-        raise ValueError("ASG security/monitoring tags must be retained")
-    if any(not isinstance(v, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", v) for v in tags.values()):
-        raise ValueError("invalid ASG tag")
     return document
 
 
@@ -115,12 +70,9 @@ def load(path: str | Path | None = None) -> dict:
 def environment(document: dict) -> dict[str, str]:
     result = {k: v for k, v in document.items() if k.isupper() and isinstance(v, str)}
     result["PRIVATE_SUBNET_IDS"] = " ".join(document["PRIVATE_SUBNET_IDS"])
-    result["SUBNET_ONE"], result["SUBNET_TWO"] = document["PRIVATE_SUBNET_IDS"]
     result["AWS_EXPECTED_ROLE"] = document["AWS_ROLE_NAME"]
     result["ECR_REGISTRY"] = f"{document['AWS_ACCOUNT_ID']}.dkr.ecr.{document['AWS_REGION']}.amazonaws.com"
     result["ECR_URI"] = result["ECR_REGISTRY"] + "/" + document["ECR_REPOSITORY"]
-    result["REVIEWED_AMI_ID"] = document["reviewed_ami"]["image_id"]
-    result["REVIEWED_SSM_PARAMETER"] = document["reviewed_ami"]["ssm_parameter"]
     return result
 
 

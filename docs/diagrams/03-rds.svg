@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" role="img">
+<title>One RDS instance, two DB subnet-group members</title>
+<desc>Reference VPC 10.0.0.0/16 • Single-AZ explicitly selected • No replica implied</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475569"/></marker></defs>
+<rect width="1280" height="900" fill="#f8fafc"/>
+<text x="40" y="48" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#0f172a">One RDS instance, two DB subnet-group members</text>
+<text x="40" y="80" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" fill="#475569">Reference VPC 10.0.0.0/16 • Single-AZ explicitly selected • No replica implied</text>
+<g><rect x="400" y="120" width="480" height="100" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="416" y="150" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Private application EC2</text>
+<text x="416" y="178" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Only app SG may connect to MariaDB TCP 3306</text>
+</g>
+<path d="M640,220 L640,285" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="650" y="211" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">Private TCP 3306; review TLS</text>
+<g><rect x="40" y="285" width="1200" height="410" rx="12" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="56" y="315" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">ONE RDS DB subnet group — two Availability Zones</text>
+</g>
+<g><rect x="80" y="365" width="520" height="230" rx="12" fill="#fff7ed" stroke="#94a3b8"/>
+<text x="96" y="395" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ A • DB subnet 10.0.21.0/24</text>
+<text x="96" y="423" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">ONE MariaDB DB instance</text>
+<text x="96" y="447" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">MultiAZ=false • PubliclyAccessible=false</text>
+<text x="96" y="471" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Encrypted storage • Backups / retention</text>
+<text x="96" y="495" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Endpoint remains a DNS name</text>
+</g>
+<g><rect x="680" y="365" width="520" height="230" rx="12" fill="#fff7ed" stroke="#94a3b8"/>
+<text x="696" y="395" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ B • DB subnet 10.0.22.0/24</text>
+<text x="696" y="423" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Subnet-group member only</text>
+<text x="696" y="447" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">No running RDS instance in this subnet</text>
+<text x="696" y="471" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">No standby in this Single-AZ design</text>
+<text x="696" y="495" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Keep a subnet in a second AZ for RDS</text>
+</g>
+<g><rect x="40" y="735" width="1200" height="85" rx="12" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="56" y="765" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Availability trade-off</text>
+<text x="56" y="793" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">A database or application instance outage interrupts service; this is a learning design with bounded rollback.</text>
+</g>
+<text x="40" y="862" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#64748b">Original ApexForge360 diagram • Reference examples only • No live AWS inventory verified</text>
+</svg>

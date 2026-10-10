@@ -1,35 +1,36 @@
-# Hardening validation
+# Single-EC2 validation record
 
-Validated 2026-10-10 on the feature branch, without accessing live AWS or changing production/Jenkins resources.
+Date:2026-10-10. Branch:feat/single-ec2-illustrated-guide. Implementation tested at4e7be380d7de6e28b60ebc7add62051e88c728a7; follow-up documentation records results. Local proof does not establish AWS/Jenkins acceptance.
 
-| Check | Result |
+| Check | Actual result |
 | --- | --- |
-| Full pytest, isolated Linux container, no network/host socket/credentials | **202 passed in 79.37s**, no skips |
-| Gitleaks 8.29.1 reachable history and current tracked tree | **0 findings** |
-| TruffleHog 3.99.2 Git/all-reachable-blob/current-tree scans, verification disabled | **0 findings** |
-| Manual reachable-object inventory | 38 baseline commits / 202 distinct blobs; runtime URI constructor classified as non-secret |
-| Trivy 0.74.0 HIGH/CRITICAL filesystem vulnerability/config scan | **0 findings** |
-| Trivy 0.74.0 complete current application-image vulnerability scan | **44 HIGH / 0 CRITICAL; 0 vendor-fixable**, all OS packages |
-| Docker Compose build and local DB/app smoke | Passed; health/readiness, table initialization and development-only sample data |
-| ShellCheck / Bash syntax | Passed for deployment/integration/monitoring scripts and rendered bootstrap |
-| Python compile / Ruff undefined-name checks | Passed; F821/F822/F823 |
-| Jenkinsfile Groovy compilation | Passed with Groovy 4 / JDK17 |
-| Embedded Jenkins shell syntax | **20 scripts passed** |
-| JSON Schema and semantic configuration checks | Passed for public example and synthetic fixture |
-| Monitoring YAML/JSON/metrics/privacy fixtures | Passed |
-| Original private identifier check | 13 original resource IDs and original account absent from current tracked tree |
-| Fresh clone of committed feature branch, public examples only | Passed: local build, MariaDB, demo data, health/readiness/metrics, CSRF-enabled registration/login and record write; no AWS credentials or private inventory |
+| Full pytest | **125 passed**, no skips,71.21s; root Linux container, no network/credentials/host socket |
+| Python | compileall passed; Ruff F821/F822/F823 passed for app/deploy/tests/docs |
+| Bash and ShellCheck | All retained deployment/integration/monitoring scripts passed |
+| Jenkinsfile | Full Groovy4/JDK17 compilation passed;18 embedded scripts passed syntax and ShellCheck |
+| Private inventory | Example/fixture JSON Schema2020-12 and semantic checks passed; example cannot authorize AWS |
+| IAM | Both policy templates parsed/rendered offline; no unresolved placeholders; exact-instance SSM/no compute mutation |
+| Compose/fresh clone | Example config valid; fresh committed clone built and started with no AWS credentials/inventory |
+| Local app | /health,/ready,/metrics HTTP200; real CSRF-enabled registration/login/record write passed |
+| Visual guide |14 labs;92 relative links;38 Bash example blocks parsed; YAML/JSON examples parsed |
+| Diagrams | Eight PNG1280x900 and editable SVG pairs; XML/header checks and all eight visual inspections passed |
+| Gitleaks8.29.1 | Zero findings, all reachable history and committed current tree |
+| TruffleHog3.99.2 | One unverified JDBC candidate in history/current tree; private review confirms documented loopback URL without credentials |
+| Trivy0.74.0 filesystem | No HIGH/CRITICAL vulnerabilities or failing misconfigurations |
+| Trivy fresh app image |44 HIGH,0 CRITICAL,0 fixable; all OS findings; complete reports retained privately, no suppressions |
+| Original identifiers |13 original resource IDs and one original private account absent from tracked current tree |
+| Removed paths | No remaining code/documentation references to removed deployment functionality; application code unchanged |
 
-The 23 new tests cover non-deployable public examples, missing/invalid/cross-account configuration, independent inventory/rendering/IAM, AMI owner enforcement, safe CI approval ordering, stable production signing keys, path/header/secret/SQL log redaction, sanitized uploads, CSRF rejection/browser form submission and development-only idempotent demo data. Existing canary, bridge/dual-stack networking, canonical identity, immutable ECR, permissions, first-boot, per-instance ASG and rollback regressions remain intact.
+## Test coverage retained and added
 
-## Reproduction
+Removed obsolete feature tests/fixtures. Retained application/CSRF/log privacy, reproducibility, immutable ECR matching/conflict/API errors, OCI manifest/index/attestation handling, canonical Docker IDs, bridge/dual-stack publications, port conflicts, candidate success/failure, production readiness/ALB failure and exact original-container restoration. Added Single-AZ MariaDB/two DB subnets, private SSM-only instance checks, explicit empty-host first installation and failure cleanup, unknown-container refusal, runtime role/signing preparation, restricted tools policy and visual-guide validation.
 
-Use README for local setup and pytest. Use `deploy/audit-history.sh` with reviewed Gitleaks/TruffleHog releases for private, repeatable history scans. Scan an image with `trivy image --scanners vuln --severity HIGH,CRITICAL IMAGE`; retain complete reports and evaluate fixable vulnerabilities separately. Render bootstrap against synthetic test inventory for offline syntax checks, never against live credentials.
+## Secret-review detail
 
-The complete suite was packaged from tracked source into a disposable test container. It ran as container root to cover root-owned runtime-file/first-boot simulations, with network disabled and no host Docker socket or AWS credentials. Docker smoke tests used a separate local audit daemon and owned Compose project; original running containers were not modified.
+The sole TruffleHog JDBC detector result is instructional localhost PostgreSQL connection syntax in Lab10, with no username/password in its authority or query. Credential verification/network probing was disabled. No rule exclusions or scanner suppression were added. The repeatable audit helper deliberately exits nonzero when candidates need private review; that exit was reviewed, not treated as zero findings. Raw logs remain private; this record publishes aggregate counts/classification only. Baseline historical audit in SECURITY-AUDIT.md remains distinct from this revision.
 
-## Remaining manual validation
+## Isolation and untested AWS steps
 
-Groovy compilation validates syntax, not Jenkins plugin availability/Declarative execution. Configure Pipeline Utility Steps, Sonar credentials/server/webhook, restricted approvals, private inventory and trusted agents administratively, then run CI with AWS_OPERATIONS=false / DEPLOY_TARGET=none after review. Sonar live acceptance and independent AWS/Ubuntu ASG acceptance remain pending. No EC2 instance was launched, no capacity changed, no IAM policy applied and no deployment performed.
+Docker checks used a separate local daemon/socket/data directory, not an existing application daemon. Fresh-clone Compose used its own project; only its containers/network were stopped, database volumes retained. Repository edits/commits/PR are the only shared-system writes.
 
-Fresh-clone rehearsal used committed application revision `b7dafb6`, copied only `.env.example` to `.env`, and followed README startup/init/seed commands in a separate owned Compose project. `/health`, `/ready` and `/metrics` returned HTTP 200. Registration, login and record creation succeeded with real submitted CSRF fields against MariaDB. The app had `USE_AWS_SECRETS=false`, no AWS keys/session token and no original/private deployment inventory. The rehearsal stopped only its own containers; its local data volume was retained.
+**No live AWS or Jenkins resources were read or changed**: no instance launch/termination, role attachment, RDS operation, secret rotation, deployment or capacity action. Network/AMI/account/host values in the guide are examples or learner-resolved values, never claimed observed live metadata. Independent lab acceptance still needs actual EC2/IAM/SSM/NAT/endpoints/ALB/RDS/packages/agent verification, Jenkins Declarative/plugin linter and Sonar webhook execution, app transport-security review, Grafana/Loki/alerts and maintenance rollback rehearsal. Groovy compilation is syntax validation, not a Jenkins plugin runtime test. The application driver does not yet establish documented RDS CA verification; do not claim live database TLS assurance.

@@ -34,10 +34,9 @@ def load_helper(name: str):
 
 def test_deployment_is_opt_in_main_only_and_archives_reports() -> None:
     pipeline = (ROOT / "Jenkinsfile").read_text(encoding="utf-8")
-    assert "choices: ['none', 'canary', 'asg']" in pipeline
-    assert "expression { params.DEPLOY_TARGET in ['canary', 'asg'] }" in pipeline
+    assert "choices: ['none', 'canary']" in pipeline
     assert "expression { params.DEPLOY_TARGET == 'canary' }" in pipeline
-    assert "expression { params.DEPLOY_TARGET == 'asg' }" in pipeline
+    assert "expression { params.DEPLOY_TARGET == 'canary' }" in pipeline
     assert "archiveArtifacts artifacts: 'reports/**'" in pipeline
     assert "TRIVY_SEVERITY" in pipeline
     assert "TRIVY_EXIT_CODE" in pipeline
@@ -185,29 +184,6 @@ def test_ecr_publisher_fails_closed_on_describe_images_authorization_error(
     assert fake.pushed is False
 
 
-def test_launch_template_allowlist_discards_unreviewed_source_tags() -> None:
-    helper = load_helper("render-launch-template-data")
-    source = {
-        "VersionNumber": 5,
-        "LaunchTemplateData": {
-            "InstanceType": "t3.micro", "IamInstanceProfile": {"Arn": "arn:aws:iam::123456789012:instance-profile/ExampleAppRole"},
-            "NetworkInterfaces": [{"DeviceIndex": 0, "Groups": ["sg-00000000000000001"], "SubnetId": "subnet-00000000000000001"}],
-            "TagSpecifications": [
-                {"ResourceType": "instance", "Tags": [{"Key": "Owner", "Value": "cloudops"}]},
-                {"ResourceType": "volume", "Tags": [{"Key": "Data", "Value": "keep"}]},
-            ]
-        },
-    }
-    import base64
-    encoded = base64.b64encode(b"#!/usr/bin/env bash\necho safe\n").decode()
-    output = helper.render(source["LaunchTemplateData"], encoded, "a" * 40)
-    assert output["UserData"] == encoded
-    assert "UserData" not in source["LaunchTemplateData"]
-    tags = {entry["ResourceType"]: entry["Tags"] for entry in output["TagSpecifications"]}
-    assert "Owner" not in {tag["Key"] for tag in tags["instance"]}
-    assert {tag["Key"]: tag["Value"] for tag in tags["instance"]}["Version"] == "a" * 40
-    assert "volume" not in tags
-    assert output["MetadataOptions"]["HttpTokens"] == "required"
 
 
 def test_ssm_renderer_quotes_command_arguments_and_checks_immutable_digest() -> None:
@@ -279,12 +255,8 @@ def test_deploy_helper_never_deletes_volumes_or_prunes_images() -> None:
 
 
 def test_secret_handling_is_non_echoing_and_runtime_file_is_private() -> None:
-    bootstrap = (ROOT / "deploy" / "cloudops-user-data.sh.tmpl").read_text(encoding="utf-8")
     deploy = (ROOT / "deploy" / "cloudops-deploy.sh").read_text(encoding="utf-8")
-    assert "set +x" in bootstrap
     assert "set +x" in deploy
-    assert "chmod 0600 \"$runtime_tmp\"" in bootstrap
-    assert 'printf \'SECRET_KEY=%s\\n\' "$session_secret"' in bootstrap
     assert 'cat "$RUNTIME_ENV"' not in deploy
     assert "SECRET_KEY" not in " ".join(line for line in deploy.splitlines() if "printf" in line)
 
@@ -292,9 +264,7 @@ def test_secret_handling_is_non_echoing_and_runtime_file_is_private() -> None:
 def test_aws_iam_policy_documents_are_valid_json_and_separate_roles() -> None:
     jenkins = json.loads((ROOT / "deploy/iam/jenkins-cloudops-deploy-policy.json").read_text(encoding="utf-8"))
     app = json.loads((ROOT / "deploy/iam/cloudops-ec2-instance-policy.json").read_text(encoding="utf-8"))
-    assert any("ec2:CreateLaunchTemplateVersion" in statement.get("Action", []) for statement in jenkins["Statement"])
     assert any(statement.get("Action") == "ssm:GetCommandInvocation" and statement["Resource"] == "*" for statement in jenkins["Statement"])
-    assert not any("ec2:CreateLaunchTemplateVersion" in statement.get("Action", []) for statement in app["Statement"])
     assert any(statement.get("Action") == "elasticloadbalancing:DescribeTargetHealth" for statement in app["Statement"])
 
 
@@ -333,49 +303,8 @@ def test_preflight_rejects_public_application_port_sources() -> None:
         raise AssertionError("public or CIDR app ingress must be rejected")
 
 
-def write_asg_preflight_snapshots(tmp_path: Path):
-    helper = load_helper("cloudops-aws-preflight")
-    alb_arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/alb-load/abc"
-    target_arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-cloudops-app/0000000000000001"
-    snapshots = {
-        "alb.json": {"LoadBalancers": [{"LoadBalancerName": "alb-load", "VpcId": "vpc-00000000000000001", "LoadBalancerArn": alb_arn, "SecurityGroups": ["sg-alb"]}]},
-        "target-group.json": {"TargetGroups": [{"TargetGroupName": "tg-cloudops-app", "TargetGroupArn": target_arn, "Port": 5000, "HealthCheckPath": "/ready", "VpcId": "vpc-00000000000000001", "LoadBalancerArns": [alb_arn]}]},
-        "listeners.json": {"Listeners": [{"DefaultActions": [{"TargetGroupArn": target_arn}]}]},
-        "observability-instance.json": {"Reservations": [{"Instances": [{"InstanceId": "i-00000000000000002", "SecurityGroups": [{"GroupId": "sg-obs"}]}]}]},
-        "rds.json": {"DBInstances": [{"DBInstanceStatus": "available"}]},
-        "logs.json": {"logGroups": [{"logGroupName": "/cloudops/app"}]},
-        "asg.json": {"AutoScalingGroups": [{
-            "AutoScalingGroupName": "asg-cloudops-app",
-            "VPCZoneIdentifier": "subnet-00000000000000001,subnet-00000000000000002",
-            "TargetGroupARNs": [target_arn],
-            "LaunchTemplate": {"LaunchTemplateId": "lt-00000000000000001", "Version": "5"},
-            "MinSize": 0, "DesiredCapacity": 0, "MaxSize": 0,
-            "HealthCheckType": "ELB",
-        }]},
-        "launch-template.json": {"VersionNumber": 5, "LaunchTemplateData": {
-            "ImageId": "ami-00000000000000002", "InstanceType": "t3.micro",
-            "IamInstanceProfile": {"Arn": "arn:aws:iam::123456789012:instance-profile/ExampleAppRole"}, "SecurityGroupIds": ["sg-00000000000000001"],
-        }},
-        "security-groups.json": {"SecurityGroups": [{"GroupId": "sg-00000000000000001", "IpPermissions": [{
-            "IpProtocol": "tcp", "FromPort": 5000, "ToPort": 5000,
-            "UserIdGroupPairs": [{"GroupId": "sg-alb"}, {"GroupId": "sg-obs"}],
-        }]}]},
-    }
-    snapshots["launch-template-source.json"] = snapshots["launch-template.json"]
-    snapshots["reviewed-ami.json"] = json.loads((ROOT / "tests/fixtures/aws-reviewed-ubuntu24.json").read_text())
-    snapshots["reviewed-ami-parameter.json"] = json.loads((ROOT / "tests/fixtures/aws-reviewed-ubuntu24-parameter.json").read_text())
-    for name, document in snapshots.items():
-        (tmp_path / name).write_text(json.dumps(document), encoding="utf-8")
-
-    return helper, target_arn
 
 
-def test_asg_preflight_uses_elb_target_group_arn_key(tmp_path: Path) -> None:
-    helper, target_arn = write_asg_preflight_snapshots(tmp_path)
-
-    found_arn, security_groups = helper.validate_common(tmp_path, "asg")
-    assert found_arn == target_arn
-    assert security_groups == ["sg-00000000000000001"]
 
 
 @pytest.fixture
