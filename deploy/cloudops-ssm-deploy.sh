@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 set +x
+# Validated non-secret inventory is required even for read-only AWS operations.
+source "${WORKSPACE:?}/deploy/load-config.sh"
 
 if (($# < 2)); then
     printf 'Usage: %s preflight|deploy|verify INSTANCE_ID [INSTANCE_ID ...]\n' "$0" >&2
@@ -31,7 +33,8 @@ fi
 : "${ECR_DEPLOY_IMAGE:?ECR_DEPLOY_IMAGE is required}"
 : "${ECR_IMAGE_DIGEST:?ECR_IMAGE_DIGEST is required}"
 
-readonly EXPECTED_TARGET_GROUP="arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/"
+: "${TARGET_GROUP_ARN:?}"
+readonly EXPECTED_TARGET_GROUP="$TARGET_GROUP_ARN"
 work_dir="$WORKSPACE/.deploy-work"
 mkdir -p "$work_dir"
 chmod 700 "$work_dir"
@@ -48,7 +51,7 @@ aws_cli() {
 
 [[ "$SCM_BRANCH" == main ]] || { printf 'Refusing SSM deployment: SCM_BRANCH is not main.\n' >&2; exit 1; }
 [[ "$GIT_COMMIT_FULL" =~ ^[0-9a-f]{40}$ && "$GIT_COMMIT_SHORT" == "${GIT_COMMIT_FULL:0:12}" ]] || { printf 'Invalid checked-out Git SHA.\n' >&2; exit 1; }
-[[ "$ECR_DEPLOY_IMAGE" == "489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal@$ECR_IMAGE_DIGEST" && "$ECR_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { printf 'Invalid ECR image digest.\n' >&2; exit 1; }
+[[ "$ECR_DEPLOY_IMAGE" == "$ECR_URI@$ECR_IMAGE_DIGEST" && "$ECR_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { printf 'Invalid ECR image digest.\n' >&2; exit 1; }
 
 head_sha="$(git rev-parse HEAD)"
 main_sha="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
@@ -62,13 +65,13 @@ case "$caller_arn" in
     *) printf 'Refusing SSM deployment: expected EC2 role %s.\n' "$AWS_EXPECTED_ROLE" >&2; exit 1 ;;
 esac
 
-target_group_arn="$(aws_cli elbv2 describe-target-groups --names tg-cloudops-app --query 'TargetGroups[0].TargetGroupArn' --output text)"
-[[ "$target_group_arn" == "$EXPECTED_TARGET_GROUP"* ]] || { printf 'Unexpected target group ARN.\n' >&2; exit 1; }
+target_group_arn="$(aws_cli elbv2 describe-target-groups --names "${TARGET_GROUP_NAME}" --query 'TargetGroups[0].TargetGroupArn' --output text)"
+[[ "$target_group_arn" == "$EXPECTED_TARGET_GROUP" ]] || { printf 'Unexpected target group ARN.\n' >&2; exit 1; }
 
 deadline=$((SECONDS + 900))
 for instance_id in "${instance_ids[@]}"; do
     [[ "$instance_id" =~ ^i-[0-9a-f]{8,17}$ ]] || { printf 'Invalid EC2 instance ID.\n' >&2; exit 2; }
-    if [[ "$mode" == deploy && "$instance_id" == i-02777a62f2a65bc1e ]]; then
+    if [[ "$mode" == deploy && "$instance_id" == "${CANARY_INSTANCE_ID}" ]]; then
         instance_state="$(aws_cli ec2 describe-instances --instance-ids "$instance_id" --query 'Reservations[0].Instances[0].State.Name' --output text)"
         [[ "$instance_state" == running ]] || { printf 'Canary EC2 %s is %s; start and prepare it manually, then retry. Pipeline will not start it.\n' "$instance_id" "$instance_state" >&2; exit 1; }
     fi
@@ -108,7 +111,7 @@ docker run --rm \
     --volumes-from jenkins \
     --user "$(id -u):$(id -g)" \
     --workdir "$WORKSPACE" \
-    "$PYTHON_IMAGE" python deploy/render-ssm-command.py "${render_args[@]}" > "$ssm_json"
+    --env CLOUDOPS_CONFIG_FILE "$PYTHON_IMAGE" python deploy/render-ssm-command.py "${render_args[@]}" > "$ssm_json"
 chmod 600 "$ssm_json"
 
 command_id="$(aws_cli ssm send-command --cli-input-json "file://$ssm_json" --query 'Command.CommandId' --output text)"

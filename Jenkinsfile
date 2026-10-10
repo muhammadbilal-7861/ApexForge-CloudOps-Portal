@@ -9,6 +9,8 @@ pipeline {
     }
 
     parameters {
+        booleanParam(name: 'AWS_OPERATIONS', defaultValue: false,
+            description: 'Explicitly request AWS publishing/preflight/deployment. Requires a reviewed private inventory and designated human approval.')
         choice(
             name: 'TRIVY_SEVERITY',
             choices: ['HIGH,CRITICAL', 'CRITICAL', 'MEDIUM,HIGH,CRITICAL'],
@@ -41,12 +43,6 @@ pipeline {
         SONAR_TOKEN_CREDENTIAL_ID = 'sonarqube-token'
         APP_IMAGE_NAME = 'apexforge-cloudops'
         AWS_CLI_IMAGE = 'public.ecr.aws/aws-cli/aws-cli:2.37.5'
-        AWS_REGION = 'eu-north-1'
-        AWS_ACCOUNT_ID = '489502663059'
-        AWS_EXPECTED_ROLE = 'DevSecOpsToolsRole'
-        ECR_REPOSITORY = 'apexforge-cloudops-portal'
-        ECR_REGISTRY = '489502663059.dkr.ecr.eu-north-1.amazonaws.com'
-        ECR_URI = '489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal'
         TRIVY_SEVERITY = "${params.TRIVY_SEVERITY}"
         TRIVY_EXIT_CODE = "${params.TRIVY_EXIT_CODE}"
     }
@@ -99,6 +95,9 @@ pipeline {
                         scmBranch = 'unknown'
                     }
                     env.SCM_BRANCH = scmBranch
+                    if (params.DEPLOY_TARGET != 'none' && !params.AWS_OPERATIONS) {
+                        error('DEPLOY_TARGET requires explicit AWS_OPERATIONS=true.')
+                    }
                 }
                 sh '''#!/bin/sh
                     set -eu
@@ -123,6 +122,7 @@ pipeline {
                         --workdir "$WORKSPACE" \
                         "$GITLEAKS_IMAGE" git \
                         --no-banner \
+                        --log-opts=--all \
                         --redact \
                         --report-format sarif \
                         --report-path "$WORKSPACE/reports/gitleaks.sarif" \
@@ -363,9 +363,54 @@ pipeline {
             }
         }
 
+        stage('Validate and approve AWS operations') {
+            when { expression { params.AWS_OPERATIONS } }
+            steps {
+                script {
+                    if (env.SCM_BRANCH != 'main') {
+                        error('AWS operations require main.')
+                    }
+                    if (params.TRIVY_SEVERITY != 'HIGH,CRITICAL' || params.TRIVY_EXIT_CODE != '1') {
+                        error('AWS operations require the blocking HIGH/CRITICAL gates.')
+                    }
+                    if (!env.CLOUDOPS_DEPLOY_APPROVERS?.trim()) {
+                        error('Configure designated CLOUDOPS_DEPLOY_APPROVERS in Jenkins.')
+                    }
+                    // Keep this non-secret private inventory in the Jenkins named volume.
+                    // No AWS credential file or static key is accepted here.
+                    if (!env.CLOUDOPS_CONFIG_FILE?.trim()) {
+                        error('Set CLOUDOPS_CONFIG_FILE to the reviewed private inventory in the Jenkins volume.')
+                    }
+                    // Freeze the non-secret inventory for this approval/build.
+                    sh '''#!/bin/bash
+                        set -euo pipefail
+                        set +x
+                        umask 077
+                        mkdir -p "$WORKSPACE/.deploy-work"
+                        chmod 700 "$WORKSPACE/.deploy-work"
+                        install -m 600 "$CLOUDOPS_CONFIG_FILE" "$WORKSPACE/.deploy-work/approved-inventory.json"
+                    '''
+                    env.CLOUDOPS_CONFIG_FILE = "${env.WORKSPACE}/.deploy-work/approved-inventory.json"
+                    def settings = readJSON text: sh(
+                        script: '''#!/bin/bash
+                            set -euo pipefail
+                            set +x
+                            python3 deploy/cloudops_config.py --format json
+                        ''', returnStdout: true)
+                    settings.each { key, value -> env[key] = value.toString() }
+                    sh 'bash deploy/assert-deploy-context.sh'
+                    timeout(time: 15, unit: 'MINUTES') {
+                        input(message: "Authorize AWS publication and preflight for ${env.GIT_COMMIT_SHORT} in reviewed account ${env.AWS_ACCOUNT_ID}? ASG preflight may create a retained candidate launch-template version, but cannot change capacity.",
+                            ok: 'Authorize AWS operations', submitter: env.CLOUDOPS_DEPLOY_APPROVERS,
+                            submitterParameter: 'AWS_APPROVED_BY')
+                    }
+                }
+            }
+        }
+
         stage('Push image to Amazon ECR') {
             when {
-                expression { env.SCM_BRANCH == 'main' }
+                expression { params.AWS_OPERATIONS && env.SCM_BRANCH == 'main' }
             }
             steps {
                 sh '''#!/bin/bash
@@ -478,10 +523,10 @@ pipeline {
                 sh '''#!/bin/bash
                     set -euo pipefail
                     set +x
-                    bash deploy/cloudops-ssm-deploy.sh deploy i-02777a62f2a65bc1e
+                    bash deploy/cloudops-ssm-deploy.sh deploy "$CANARY_INSTANCE_ID"
                     mkdir -p reports
-                    printf '{"target":"canary","instance":"i-02777a62f2a65bc1e","commit":"%s","image":"%s","result":"verified"}\\n' \\
-                        "$GIT_COMMIT_FULL" "$ECR_DEPLOY_IMAGE" > reports/deployment-evidence.json
+                    printf '{"target":"canary","instance":"%s","commit":"%s","image":"%s","result":"verified"}\\n' \\
+                        "$CANARY_INSTANCE_ID" "$GIT_COMMIT_FULL" "$ECR_DEPLOY_IMAGE" > reports/deployment-evidence.json
                 '''
             }
         }
@@ -518,7 +563,7 @@ pipeline {
             archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true, fingerprint: true
         }
         success {
-            echo 'CI and configured security gates completed successfully. No production deployment was performed.'
+            echo "CI and security gates passed. Requested deployment target: ${params.DEPLOY_TARGET}. Review deployment evidence for the result."
         }
     }
 }

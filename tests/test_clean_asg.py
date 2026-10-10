@@ -13,7 +13,7 @@ import pytest
 from tests.test_deployment_foundation import ROOT, fake_canary_host, load_helper, write_asg_preflight_snapshots
 
 FIXTURES = ROOT / "tests/fixtures"
-IMAGE = "489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal@sha256:" + "a" * 64
+IMAGE = "123456789012.dkr.ecr.us-east-1.amazonaws.com/apexforge-cloudops-portal@sha256:" + "a" * 64
 COMMIT = "b" * 40
 
 
@@ -38,11 +38,11 @@ def test_preview_preserves_source_v5_profile_and_group_and_removes_subnet():
         source, read_fixture("aws-reviewed-ubuntu24.json"), read_fixture("aws-reviewed-ubuntu24-parameter.json"), overrides)
     assert source == original
     assert result["sourceVersion"] == 5
-    assert result["newImageId"] == "ami-0769f265f707fecc8"
+    assert result["newImageId"] == "ami-00000000000000001"
     assert result["imageOwnerId"] == "099720109477"
-    assert result["instanceProfile"] == {"Arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"}
+    assert result["instanceProfile"] == {"Arn": "arn:aws:iam::123456789012:instance-profile/ExampleAppRole"}
     interface = result["networkInterfaces"][0]
-    assert interface["Groups"] == ["sg-0f9613afd389c288d"]
+    assert interface["Groups"] == ["sg-00000000000000001"]
     assert "SubnetId" not in interface
     assert interface["AssociatePublicIpAddress"] is False
     assert result["metadataOptions"]["HttpTokens"] == "required"
@@ -56,7 +56,7 @@ def test_preview_preserves_source_v5_profile_and_group_and_removes_subnet():
 
 
 @pytest.mark.parametrize("key,value", [
-    ("OwnerId", "489502663059"), ("ImageId", "ami-09b67ca726bea7328"), ("Public", False),
+    ("OwnerId", "123456789012"), ("ImageId", "ami-00000000000000002"), ("Public", False),
     ("Architecture", "arm64"), ("State", "pending"), ("ImageOwnerAlias", "private"),
     ("ImageLocation", "private/contaminated"), ("PublicSsmParameterName", "aws/service/untrusted/image"),
     ("DeprecationTime", "2020-01-01T00:00:00Z"),
@@ -101,31 +101,31 @@ def test_asg_preflight_accepts_clean_arn_profile_and_asg_subnet_selection(tmp_pa
     template["VersionNumber"] = 6
     template["LaunchTemplateData"].pop("Placement")
     template["LaunchTemplateData"].update(
-        ImageId="ami-0769f265f707fecc8", MetadataOptions={"HttpTokens": "required", "HttpEndpoint": "enabled", "HttpPutResponseHopLimit": 1},
-        NetworkInterfaces=[{"DeviceIndex": 0, "Groups": ["sg-0f9613afd389c288d"], "AssociatePublicIpAddress": False}])
+        ImageId="ami-00000000000000001", MetadataOptions={"HttpTokens": "required", "HttpEndpoint": "enabled", "HttpPutResponseHopLimit": 1},
+        NetworkInterfaces=[{"DeviceIndex": 0, "Groups": ["sg-00000000000000001"], "AssociatePublicIpAddress": False}])
     path = tmp_path / "launch-template.json"
     path.write_text(json.dumps(template))
     target, groups = helper.validate_common(tmp_path, "asg")
     assert target == expected_target
-    assert groups == ["sg-0f9613afd389c288d"]
-    template["LaunchTemplateData"]["NetworkInterfaces"][0]["SubnetId"] = "subnet-08469c4e69b5c4d65"
+    assert groups == ["sg-00000000000000001"]
+    template["LaunchTemplateData"]["NetworkInterfaces"][0]["SubnetId"] = "subnet-00000000000000001"
     path.write_text(json.dumps(template))
     with pytest.raises(helper.PreflightError, match="subnet selection"):
         helper.validate_common(tmp_path, "asg")
 
 
 @pytest.mark.parametrize("profile", [
-    {"Name": "CloudOpsEC2Role"}, {"Arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"},
+    {"Name": "ExampleAppRole"}, {"Arn": "arn:aws:iam::123456789012:instance-profile/ExampleAppRole"},
 ])
 def test_launch_renderer_supports_exact_profile_name_or_arn(profile):
     source = read_fixture("cloudops-launch-template-v5.json")["LaunchTemplateData"]
     source["IamInstanceProfile"] = profile
     output = load_helper("render-launch-template-data").render(source, base64.b64encode(rendered_bootstrap().encode()).decode(), COMMIT[:12])
-    assert output["IamInstanceProfile"] == {"Arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"}
+    assert output["IamInstanceProfile"] == {"Arn": "arn:aws:iam::123456789012:instance-profile/ExampleAppRole"}
 
 
 @pytest.mark.parametrize("change", [
-    {"IamInstanceProfile": {"Arn": "arn:aws:iam::000000000000:instance-profile/CloudOpsEC2Role"}},
+    {"IamInstanceProfile": {"Arn": "arn:aws:iam::000000000000:instance-profile/ExampleAppRole"}},
     {"NetworkInterfaces": [{"DeviceIndex": 0, "Groups": ["sg-unexpected"]}]},
     {"BlockDeviceMappings": [{"DeviceName": "/dev/xvda", "Ebs": {"SnapshotId": "snap-contaminated"}}]},
 ])
@@ -213,6 +213,8 @@ def test_asg_rollout_reuses_approved_candidate_counts_only_its_instances_and_rol
         pytest.skip("shell orchestration requires Linux")
     workspace = tmp_path / "workspace"
     (workspace / "deploy").mkdir(parents=True)
+    for config_file in ("load-config.sh", "cloudops_config.py"):
+        (workspace / "deploy" / config_file).write_text((ROOT / "deploy" / config_file).read_text())
     (workspace / ".deploy-work").mkdir()
     (workspace / "reports").mkdir()
     (workspace / ".deploy-work/launch-template-overrides.json").write_text("{}")
@@ -223,7 +225,7 @@ def test_asg_rollout_reuses_approved_candidate_counts_only_its_instances_and_rol
         '#!/bin/bash\n[[ "$1" == 6 ]] || exit 2\n[[ "$TEST_ROLLOUT_FAILURE" != new-version-denied ]]\n')
     (workspace / "deploy/cloudops-ssm-deploy.sh").write_text(
         '#!/bin/bash\n[[ "$CLOUDOPS_REQUIRE_BOOTSTRAP_COMPLETE" == true ]] || exit 2\n'
-        '[[ "$*" == "verify i-11111111111111111" ]] || exit 2\n'
+        '[[ "$*" == "verify i-0000000000000000e" ]] || exit 2\n'
         '[[ "$TEST_ROLLOUT_FAILURE" != instance-verification ]]\n')
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -242,14 +244,14 @@ elif a[:2]==["autoscaling","describe-auto-scaling-groups"]:
     if "LaunchTemplate.Version" in query and "MinSize" in query: print(" ".join(state))
     elif "MinSize" in query: print(" ".join(state[:3]))
     elif "LaunchTemplate.Version" in query: print("5")
-    else: print("i-11111111111111111 i-22222222222222222" if failure=="extra-instance" else "i-11111111111111111")
+    else: print("i-0000000000000000e i-0000000000000000f" if failure=="extra-instance" else "i-0000000000000000e")
 elif a[:2]==["elasticloadbalancing","describe-target-groups"] or a[:2]==["elbv2","describe-target-groups"]:
-    print("arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/test")
+    print("arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-cloudops-app/0000000000000001")
 elif a[:2]==["elbv2","describe-target-health"]:
     if failure=="authorization": sys.exit(254)
     if "--targets" not in a: raise SystemExit("Global target counts could include the canary")
     target=a[a.index("--targets")+1]
-    print("unhealthy" if failure=="one-unhealthy" and "i-1111" in target else "healthy")
+    print("unhealthy" if failure=="one-unhealthy" and "i-0000000000000000e" in target else "healthy")
 elif a[:2]==["autoscaling","update-auto-scaling-group"]:
     initial=a[a.index("--desired-capacity")+1]=="1"
     if initial and failure=="initial-denied": sys.exit(254)
@@ -266,7 +268,7 @@ else: sys.exit(2)
     state_path = tmp_path / "asg-state.json"
     state_path.write_text(json.dumps(["0", "0", "0", "5"]))
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", WORKSPACE=str(workspace), AWS_CLI_IMAGE="mock-aws",
-               PYTHON_IMAGE="unused-python", AWS_REGION="eu-north-1", ECR_DEPLOY_IMAGE=IMAGE,
+               PYTHON_IMAGE="unused-python", AWS_REGION="us-east-1", ECR_DEPLOY_IMAGE=IMAGE,
                GIT_COMMIT_SHORT=COMMIT[:12], GIT_COMMIT_FULL=COMMIT, ASG_AMI_REVIEWED="true", ASG_VALIDATED_VERSION="6",
                AWS_TEST_CALLS=str(call_log), ASG_TEST_STATE=str(state_path), TEST_ROLLOUT_FAILURE=failure or "none")
     result = subprocess.run(["bash", str(script)], cwd=workspace, env=env, capture_output=True, text=True, timeout=10)
@@ -296,7 +298,7 @@ else: sys.exit(2)
         assert evidence["capacity"] == {"min": 1, "desired": 1, "max": 1}
         assert evidence["perInstanceVerification"] == "passed"
         assert evidence["canaryRetired"] is False
-        assert evidence["instances"] == ["i-11111111111111111"]
+        assert evidence["instances"] == ["i-0000000000000000e"]
         assert json.loads(state_path.read_text()) == ["1", "1", "1", "6"]
 
 
@@ -355,7 +357,7 @@ a=sys.argv[1:]
 url=next((item for item in a if item.startswith("https://raw.githubusercontent.com/")),None)
 if any(item.startswith("http://169.254.169.254/") for item in a):
     if os.getenv("TEST_DIAGNOSTICS_IMDS_FAIL")=="true": sys.exit(22)
-    print("fixture-imds-token" if any("/api/token" in item for item in a) else "i-11111111111111111")
+    print("fixture-imds-token" if any("/api/token" in item for item in a) else "i-0000000000000000e")
 elif url:
     shutil.copyfile(Path(os.environ["BOOTSTRAP_SOURCE_ROOT"])/url.rsplit("/",1)[1], a[a.index("-o")+1])
 elif any(item.startswith(("https://awscli.amazonaws.com/", "https://amazoncloudwatch-agent.s3.amazonaws.com/")) for item in a):

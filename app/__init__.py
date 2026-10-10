@@ -15,11 +15,13 @@ def create_app(test_config=None):
     app = Flask(__name__)
     app.config.from_object(Config)
     if test_config: app.config.update(test_config)
+    if not app.config.get("TESTING") and app.config["FLASK_ENV"] == "production" and len(os.getenv("SECRET_KEY", "")) < 32:
+        raise RuntimeError("Production requires a stable SECRET_KEY of at least 32 characters from the approved runtime environment")
     if not app.config.get("SQLALCHEMY_DATABASE_URI"):
         try: app.config["SQLALCHEMY_DATABASE_URI"] = database_uri()
         except RuntimeError:
             app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite://"
-            app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {}
+            app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"hide_parameters": True}
             app.extensions["database_config_error"] = True
     db.init_app(app); login_manager.init_app(app); csrf.init_app(app)
     login_manager.login_view = "auth.login"
@@ -30,11 +32,16 @@ def create_app(test_config=None):
     @app.before_request
     def before_request():
         supplied_id = request.headers.get("X-Request-ID", "")[:128]
-        g.request_id = "".join(ch for ch in supplied_id if ch.isalnum() or ch in "-_.") or str(uuid.uuid4())
+        try:
+            g.request_id = str(uuid.UUID(supplied_id))
+        except ValueError:
+            g.request_id = str(uuid.uuid4())
         g.started_at = time.perf_counter()
     @app.after_request
     def after_request(response):
-        response.headers["X-Request-ID"] = getattr(g, "request_id", "")
+        # CSRF can reject a request before our before_request hook runs.
+        g.request_id = getattr(g, "request_id", None) or str(uuid.uuid4())
+        response.headers["X-Request-ID"] = g.request_id
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -45,7 +52,7 @@ def create_app(test_config=None):
         if response.status_code >= 400: http_errors.labels(str(response.status_code)).inc()
         from flask_login import current_user
         user = current_user.get_id() if current_user.is_authenticated else "anonymous"
-        app.logger.info("request_id=%s host=%s method=%s path=%s status=%s duration_ms=%.1f user=%s", g.request_id, socket.gethostname(), request.method, request.path, response.status_code, duration*1000, user)
+        app.logger.info("request_id=%s host=%s method=%s endpoint=%s status=%s duration_ms=%.1f user=%s", g.request_id, socket.gethostname(), request.method, endpoint, response.status_code, duration*1000, user)
         return response
     from .routes import bp
     app.register_blueprint(bp)
@@ -54,6 +61,22 @@ def create_app(test_config=None):
         """Create application tables if they do not exist."""
         db.create_all()
         click.echo("Database tables are ready.")
+    @app.cli.command("seed-demo")
+    def seed_demo_command():
+        """Load synthetic local learning data; never reset an existing password."""
+        if app.config["FLASK_ENV"] != "development":
+            raise click.ClickException("Demo data is permitted only in development")
+        from .models import Record
+        db.create_all()
+        user = User.query.filter_by(username="local-demo").first()
+        if user is None:
+            user = User(username="local-demo", email="demo@example.invalid")
+            user.set_password("development-only-demo-password")
+            db.session.add(user)
+            db.session.flush()
+            db.session.add(Record(title="Local readiness exercise", description="Stop the local database and compare /health with /ready.", created_by=user.id))
+            db.session.commit()
+        click.echo("Synthetic demo data ready; see README for development-only login.")
     @app.get("/health")
     def health(): return jsonify(status="healthy", service="cloudops-portal")
     @app.get("/ready")

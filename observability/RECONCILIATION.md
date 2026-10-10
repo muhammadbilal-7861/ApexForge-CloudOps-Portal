@@ -1,3 +1,5 @@
+> Historical engineering notes: resource identifiers below have been replaced with synthetic examples. They are not current deployment instructions or verified live resources. Use [the reusable configuration guide](../docs/CONFIGURATION.md) and reviewed private inventory.
+
 # Reconcile the installed project
 
 Inventory approval is a gate before service restarts, new images, mount changes or merge. Installed versions, project paths, service names, data-source UIDs and storage locations are currently UNKNOWN. This is a reconciliation plan, deliberately not a second standalone Compose stack.

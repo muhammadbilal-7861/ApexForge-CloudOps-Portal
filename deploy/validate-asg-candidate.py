@@ -9,6 +9,7 @@ import json
 import re
 from pathlib import Path
 
+from cloudops_ami import ENV
 from cloudops_launch import LAUNCH_TEMPLATE_ID, fingerprint, normalized, validate_settings
 
 
@@ -25,7 +26,7 @@ def validate(candidate: dict, expected: dict, version: str, image: str, commit: 
         raise ValueError("AWS candidate differs from the reviewed launch settings")
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("invalid release commit")
-    if not re.fullmatch(r"489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}", image):
+    if not re.fullmatch(re.escape(ENV["ECR_URI"]) + r"@sha256:[0-9a-f]{64}", image):
         raise ValueError("invalid immutable release digest")
     script = base64.b64decode(actual["UserData"], validate=True).decode()
     if f'IMAGE_URI="{image}"' not in script or f'SOURCE_COMMIT="{commit}"' not in script:

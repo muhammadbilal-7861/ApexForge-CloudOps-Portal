@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apexforge360/deployment.schema.json",
+  "title": "ApexForge360 reviewed non-secret deployment inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ALB_NAME",
+    "APP_ROLE_NAME",
+    "APP_SECURITY_GROUP_ID",
+    "ASG_NAME",
+    "AWS_ACCOUNT_ID",
+    "AWS_REGION",
+    "AWS_ROLE_NAME",
+    "CANARY_INSTANCE_ID",
+    "DB_SECRET_NAME",
+    "ECR_REPOSITORY",
+    "INSTANCE_PROFILE_ARN",
+    "LAUNCH_TEMPLATE_ID",
+    "LEGACY_CONTAINER_NAME",
+    "LEGACY_IMAGE",
+    "LOG_GROUP_NAME",
+    "OBSERVABILITY_INSTANCE_ID",
+    "PRIVATE_SUBNET_IDS",
+    "RDS_INSTANCE_ID",
+    "SESSION_COOKIE_SECURE",
+    "SESSION_SECRET_NAME",
+    "SOURCE_REPOSITORY",
+    "TARGET_GROUP_ARN",
+    "TARGET_GROUP_NAME",
+    "VPC_ID",
+    "example_only",
+    "reviewed_ami",
+    "INSTANCE_PROFILE_NAME"
+  ],
+  "properties": {
+    "AWS_ACCOUNT_ID": {
+      "type": "string",
+      "pattern": "^(?:[0-9]{12})$"
+    },
+    "AWS_REGION": {
+      "type": "string",
+      "pattern": "^(?:[a-z]{2}-[a-z]+-[0-9])$"
+    },
+    "AWS_ROLE_NAME": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9+=,.@_-]{1,64})$"
+    },
+    "APP_ROLE_NAME": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9+=,.@_-]{1,64})$"
+    },
+    "ECR_REPOSITORY": {
+      "type": "string",
+      "pattern": "^(?:[a-z0-9]+(?:[._/-][a-z0-9]+)*)$"
+    },
+    "VPC_ID": {
+      "type": "string",
+      "pattern": "^(?:vpc-[0-9a-f]{17})$"
+    },
+    "APP_SECURITY_GROUP_ID": {
+      "type": "string",
+      "pattern": "^(?:sg-[0-9a-f]{17})$"
+    },
+    "LAUNCH_TEMPLATE_ID": {
+      "type": "string",
+      "pattern": "^(?:lt-[0-9a-f]{17})$"
+    },
+    "CANARY_INSTANCE_ID": {
+      "type": "string",
+      "pattern": "^(?:i-[0-9a-f]{17})$"
+    },
+    "OBSERVABILITY_INSTANCE_ID": {
+      "type": "string",
+      "pattern": "^(?:i-[0-9a-f]{17})$"
+    },
+    "SOURCE_REPOSITORY": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$"
+    },
+    "SESSION_COOKIE_SECURE": {
+      "type": "string",
+      "pattern": "^(?:true|false)$"
+    },
+    "LEGACY_CONTAINER_NAME": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,127})$"
+    },
+    "LEGACY_IMAGE": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9_./:-]+)$"
+    },
+    "ASG_NAME": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_./-]{1,128}$"
+    },
+    "TARGET_GROUP_NAME": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_./-]{1,128}$"
+    },
+    "ALB_NAME": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_./-]{1,128}$"
+    },
+    "RDS_INSTANCE_ID": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_./-]{1,128}$"
+    },
+    "DB_SECRET_NAME": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_./-]{1,128}$"
+    },
+    "SESSION_SECRET_NAME": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_./-]{1,128}$"
+    },
+    "LOG_GROUP_NAME": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_./-]{1,128}$"
+    },
+    "example_only": {
+      "type": "boolean"
+    },
+    "INSTANCE_PROFILE_ARN": {
+      "type": "string"
+    },
+    "TARGET_GROUP_ARN": {
+      "type": "string"
+    },
+    "PRIVATE_SUBNET_IDS": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^subnet-[0-9a-f]{17}$"
+      }
+    },
+    "reviewed_ami": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "application_security_group",
+        "architecture",
+        "asg_propagated_tags",
+        "creation_date",
+        "image_id",
+        "image_location",
+        "image_ssm_parameter",
+        "instance_profile_arn",
+        "name",
+        "owner_alias",
+        "owner_id",
+        "private_subnets",
+        "region",
+        "rejected_image_id",
+        "review_date",
+        "root_snapshot_id",
+        "source_template_version",
+        "ssm_parameter",
+        "ssm_parameter_version"
+      ],
+      "properties": {
+        "region": {
+          "type": "string"
+        },
+        "review_date": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string",
+          "const": "099720109477"
+        },
+        "owner_alias": {
+          "type": "string",
+          "const": "amazon"
+        },
+        "image_ssm_parameter": {
+          "type": "string"
+        },
+        "application_security_group": {
+          "type": "string"
+        },
+        "rejected_image_id": {
+          "type": "string",
+          "pattern": "^ami-[0-9a-f]{17}$"
+        },
+        "private_subnets": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^subnet-[0-9a-f]{17}$"
+          }
+        },
+        "root_snapshot_id": {
+          "type": "string",
+          "pattern": "^snap-[0-9a-f]{17}$"
+        },
+        "architecture": {
+          "type": "string",
+          "const": "x86_64"
+        },
+        "creation_date": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ssm_parameter": {
+          "type": "string"
+        },
+        "ssm_parameter_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "instance_profile_arn": {
+          "type": "string"
+        },
+        "image_id": {
+          "type": "string",
+          "pattern": "^ami-[0-9a-f]{17}$"
+        },
+        "image_location": {
+          "type": "string"
+        },
+        "source_template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "const": 5
+        },
+        "asg_propagated_tags": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "Environment",
+            "Monitoring",
+            "Name",
+            "Project",
+            "Role"
+          ],
+          "properties": {
+            "Environment": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+            },
+            "Monitoring": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+            },
+            "Name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+            },
+            "Project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+            },
+            "Role": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]{1,128}$"
+            }
+          }
+        }
+      }
+    },
+    "INSTANCE_PROFILE_NAME": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+=,.@_-]{1,64}$"
+    }
+  }
+}

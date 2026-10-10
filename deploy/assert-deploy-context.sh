@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 set +x
+# Validated non-secret inventory is required even for read-only AWS operations.
+source "${WORKSPACE:?}/deploy/load-config.sh"
 
 : "${WORKSPACE:?Jenkins WORKSPACE is required}"
 : "${AWS_CLI_IMAGE:?AWS_CLI_IMAGE is required}"

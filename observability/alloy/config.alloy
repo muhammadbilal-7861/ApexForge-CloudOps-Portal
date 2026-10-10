@@ -13,11 +13,11 @@ loki.source.journal "cloudops" {
 // Incoming request IDs can contain private data; retain only canonical UUIDs.
 loki.process "safe_requests" {
   stage.regex {
-    expression = "^.* INFO request_id=(?P<request_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}) host=[A-Za-z0-9_.-]+ method=(?P<method>GET|POST|HEAD|OPTIONS) path=(?P<path>/(?:health|ready|metrics|login|register|logout|dashboard|users|records|records/add|upload|status|api/status|troubleshooting)?) status=(?P<status>[1-5][0-9]{2}) duration_ms=(?P<duration_ms>[0-9]+\\.[0-9]+) user=[^ ]+$"
+    expression = "^.* INFO request_id=(?P<request_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}) host=[A-Za-z0-9_.-]+ method=(?P<method>GET|POST|HEAD|OPTIONS) endpoint=(?P<endpoint>health|ready|auth[.]index|auth[.]prometheus_metrics|auth[.]login|auth[.]register|auth[.]logout|auth[.]dashboard|auth[.]users|auth[.]records|auth[.]add_record|auth[.]delete_record|auth[.]file_upload|auth[.]system_status|auth[.]api_status|auth[.]troubleshooting) status=(?P<status>[1-5][0-9]{2}) duration_ms=(?P<duration_ms>[0-9]+\\.[0-9]+) user=[^ ]+$"
   }
   stage.template {
     source = "safe_line"
-    template = "{{ if .request_id }}request_id={{ .request_id }} method={{ .method }} path={{ .path }} status={{ .status }} duration_ms={{ .duration_ms }}{{ else }}DROP{{ end }}"
+    template = "{{ if .request_id }}request_id={{ .request_id }} method={{ .method }} endpoint={{ .endpoint }} status={{ .status }} duration_ms={{ .duration_ms }}{{ else }}DROP{{ end }}"
   }
   stage.output { source = "safe_line" }
   stage.drop { expression = "^DROP$" }

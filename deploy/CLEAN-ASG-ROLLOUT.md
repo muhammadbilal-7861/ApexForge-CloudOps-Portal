@@ -1,12 +1,14 @@
+> Historical engineering notes: resource identifiers below have been replaced with synthetic examples. They are not current deployment instructions or verified live resources. Use [the reusable configuration guide](../docs/CONFIGURATION.md) and reviewed private inventory.
+
 # Clean Ubuntu 24.04 CloudOps ASG rollout
 
 ## Reviewed image and launch configuration
 
-Read-only AWS discovery on 2026-10-04 resolved Canonical's public parameter `/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id` (reported version 77) to **`ami-0769f265f707fecc8`** in `eu-north-1`. `DescribeImages --owners 099720109477` confirmed Canonical ownership, public/available x86_64 HVM EBS, IMDSv2 support and name `ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260923`. The gp3 root disk uses snapshot `snap-018e23b01d6c25622`. AWS reports alias `amazon` and a `noble` public-parameter alias; the Canonical account ID is authoritative. Both aliases are pinned in `reviewed-ubuntu24.json`. [Canonical image discovery](https://ubuntu.com/aws/docs/aws-how-to/instances/find-ubuntu-images/).
+Read-only AWS discovery on 2026-10-04 resolved Canonical's public parameter `/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id` (reported version 77) to **`ami-00000000000000001`** in `us-east-1`. `DescribeImages --owners 099720109477` confirmed Canonical ownership, public/available x86_64 HVM EBS, IMDSv2 support and name `ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260923`. The gp3 root disk uses snapshot `snap-00000000000000001`. AWS reports alias `amazon` and a `noble` public-parameter alias; the Canonical account ID is authoritative. Both aliases are pinned in `reviewed-ubuntu24.json`. [Canonical image discovery](https://ubuntu.com/aws/docs/aws-how-to/instances/find-ubuntu-images/).
 
 Deployment uses the literal reviewed ImageId, never `resolve:ssm` or the moving parameter as a launch input. Preflight checks the current public parameter against the reviewed ID/version and aborts on drift. A replacement requires a new provenance review, IAM image-resource update, fixtures and bootstrap tests. Deprecated, private, wrong-owner, non-gp3 or wrong-architecture images fail closed.
 
-Contaminated Ubuntu AMI `ami-09b67ca726bea7328` is rejected for launch. It is allowed only as the inventoried LT v5 source reference while the ASG is idle at 0/0/0. Its user data and snapshots are never copied; no AMI is built from it. Version 5 also pins `Placement.AvailabilityZoneId=eun1-az1`. New numeric versions **omit `--source-version` entirely** and use a complete validated allowlist: reviewed AMI, explicit `t3.micro`, approved profile ARN, one private subnet-free interface, rendered user data, reviewed instance tags and IMDSv2 settings. Placement, Availability Zone, SubnetId, inherited disk mappings and other unreviewed fields are forbidden. Version 5 is inventory evidence only. [AWS SourceVersion semantics](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateLaunchTemplateVersion.html). V5 and the default version stay unchanged. Preserve `t3.micro`, profile ARN `arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role`, and group `sg-0f9613afd389c288d`. The new LT has no subnet pin or public IP. ASG subnets `subnet-08469c4e69b5c4d65` and `subnet-05788ba98ca1096e6` remain unchanged. IMDS requires tokens, an enabled endpoint and hop limit 1.
+Contaminated Ubuntu AMI `ami-00000000000000002` is rejected for launch. It is allowed only as the inventoried LT v5 source reference while the ASG is idle at 0/0/0. Its user data and snapshots are never copied; no AMI is built from it. Version 5 also pins `Placement.AvailabilityZoneId=use1-az1`. New numeric versions **omit `--source-version` entirely** and use a complete validated allowlist: reviewed AMI, explicit `t3.micro`, approved profile ARN, one private subnet-free interface, rendered user data, reviewed instance tags and IMDSv2 settings. Placement, Availability Zone, SubnetId, inherited disk mappings and other unreviewed fields are forbidden. Version 5 is inventory evidence only. [AWS SourceVersion semantics](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateLaunchTemplateVersion.html). V5 and the default version stay unchanged. Preserve `t3.micro`, profile ARN `arn:aws:iam::123456789012:instance-profile/ExampleAppRole`, and group `sg-00000000000000001`. The new LT has no subnet pin or public IP. ASG subnets `subnet-00000000000000001` and `subnet-00000000000000002` remain unchanged. IMDS requires tokens, an enabled endpoint and hop limit 1.
 
 ## Initial single-instance capacity policy
 
@@ -41,16 +43,16 @@ Checksum-pinned deploy/verify scripts from the exact release commit check candid
 
 ## Jenkins IAM policy: operator action after review
 
-The repository policy adds `ec2:RunInstances` for the pinned AMI, exact LT, both subnets and SG, restricted by region/LT. Generated instances require `t3.micro`, IMDSv2 and `Role=app`; generated volumes/interfaces remain region/LT restricted. `ec2:CreateTags` is limited to instance/volume tagging during RunInstances and approved keys: Role, Monitoring, Version, existing ASG Environment/Name/Project, and the AWS-managed autoscaling group tag. Read-only discovery verified the propagated values in `reviewed-ubuntu24.json`; permission probes merge those ASG tags with LT instance tags and reject drift. `iam:PassRole` remains limited to CloudOpsEC2Role and EC2. [AWS launch-template IAM guidance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/permissions-for-launch-templates.html).
+The repository policy adds `ec2:RunInstances` for the pinned AMI, exact LT, both subnets and SG, restricted by region/LT. Generated instances require `t3.micro`, IMDSv2 and `Role=app`; generated volumes/interfaces remain region/LT restricted. `ec2:CreateTags` is limited to instance/volume tagging during RunInstances and approved keys: Role, Monitoring, Version, existing ASG Environment/Name/Project, and the AWS-managed autoscaling group tag. Read-only discovery verified the propagated values in `reviewed-ubuntu24.json`; permission probes merge those ASG tags with LT instance tags and reject drift. `iam:PassRole` remains limited to ExampleAppRole and EC2. [AWS launch-template IAM guidance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/permissions-for-launch-templates.html).
 
 **Do not perform the IAM write while preparing this PR.** After review, an authorized IAM administrator should inventory/back up current policies and inspect SCPs, boundaries and explicit denies. Apply this reviewed inline policy separately; it does not replace other attached policies or grant Jenkins IAM-edit permissions:
 
 ```bash
-aws iam get-role --role-name DevSecOpsToolsRole --query Role.Arn
-aws iam list-role-policies --role-name DevSecOpsToolsRole
-aws iam list-attached-role-policies --role-name DevSecOpsToolsRole
+aws iam get-role --role-name ExampleToolsRole --query Role.Arn
+aws iam list-role-policies --role-name ExampleToolsRole
+aws iam list-attached-role-policies --role-name ExampleToolsRole
 # Authorized administrator, only after review:
-aws iam put-role-policy --role-name DevSecOpsToolsRole \
+aws iam put-role-policy --role-name ExampleToolsRole \
   --policy-name CloudOpsReviewedAsgDeployment \
   --policy-document file://deploy/iam/jenkins-cloudops-deploy-policy.json
 ```
@@ -59,7 +61,7 @@ An Allow does not override an explicit Deny. Audit other broad grants too. Use i
 
 ## Preview, permission validation and controlled deployment
 
-First run successful merged-main CI with `DEPLOY_TARGET=none`. Gitleaks, pytest, SonarQube/Quality Gate, Trivy and immutable ECR publication must pass. For the later rollout, use Jenkins's DevSecOpsToolsRole session and pipeline-supplied source commit/digest, `DEPLOY_TARGET=asg`, `ASG_AMI_REVIEWED=true` and designated `CLOUDOPS_DEPLOY_APPROVERS`.
+First run successful merged-main CI with `DEPLOY_TARGET=none`. Gitleaks, pytest, SonarQube/Quality Gate, Trivy and immutable ECR publication must pass. For the later rollout, use Jenkins's ExampleToolsRole session and pipeline-supplied source commit/digest, `DEPLOY_TARGET=asg`, `ASG_AMI_REVIEWED=true` and designated `CLOUDOPS_DEPLOY_APPROVERS`.
 
 Before manual approval Jenkins runs:
 

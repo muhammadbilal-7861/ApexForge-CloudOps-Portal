@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+set +x
+: "${AWS_REGION:?}" "${AWS_ACCOUNT_ID:?}" "${ECR_URI:?}" "${ECR_REGISTRY:?}" "${TARGET_GROUP_ARN:?}" "${DB_SECRET_NAME:?}" "${SESSION_SECRET_NAME:?}" "${LOG_GROUP_NAME:?}" "${SESSION_COOKIE_SECURE:?}"
 exec > >(tee -a "${CLOUDOPS_DEPLOY_LOG:-/var/log/cloudops-deploy.log}") 2>&1
 
-readonly AWS_REGION="eu-north-1"
-readonly ECR_REGISTRY="489502663059.dkr.ecr.eu-north-1.amazonaws.com"
 readonly RUNTIME_ENV="${CLOUDOPS_RUNTIME_ENV:-/etc/cloudops/runtime.env}"
 readonly CONTAINER_NAME="cloudops-app"
-readonly LEGACY_CONTAINER_NAME="cloudops-flask"
-readonly LEGACY_IMAGE="cloudops-flask:1.1"
+readonly LEGACY_CONTAINER_NAME="${LEGACY_CONTAINER_NAME:?}"
+readonly LEGACY_IMAGE="${LEGACY_IMAGE:?}"
 readonly VERIFY_SCRIPT="${CLOUDOPS_VERIFY_SCRIPT:-/usr/local/sbin/cloudops-verify.sh}"
 
 log() { printf '[cloudops-deploy] %s\n' "$*"; }
@@ -131,14 +131,14 @@ while (($#)); do
     esac
 done
 
-if [[ ! "$image_uri" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]; then
+if [[ ! "$image_uri" =~ ^"${ECR_URI}"@sha256:[0-9a-f]{64}$ ]]; then
     fail 'image must be this account/repository pinned to a SHA256 digest.'
 fi
 if [[ ! "$app_version" =~ ^[0-9a-f]{12,40}$ ]]; then
     fail 'application version must be a Git commit SHA.'
 fi
 if [[ -n "$target_group_arn" || -n "$instance_id" ]]; then
-    [[ "$target_group_arn" == arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/* ]] || fail 'unexpected ALB target group.'
+    [[ "$target_group_arn" == "$TARGET_GROUP_ARN" ]] || fail 'unexpected ALB target group.'
     [[ "$instance_id" =~ ^i-[0-9a-f]{8,17}$ ]] || fail 'an EC2 instance ID is required for ALB verification.'
     aws elbv2 describe-target-health --region "$AWS_REGION" --target-group-arn "$target_group_arn" \
         --targets "Id=$instance_id,Port=5000" --output json >/dev/null || fail 'Application-role ALB permission check failed before candidate creation.'
@@ -150,6 +150,7 @@ fi
 runtime_owner_mode="$(stat -c '%U:%G:%a' "$RUNTIME_ENV")"
 [[ "$runtime_owner_mode" == root:root:600 ]] || fail "$RUNTIME_ENV must be owned by root:root with mode 0600 (found $runtime_owner_mode)."
 python3 - "$RUNTIME_ENV" <<'PY'
+import os
 import sys
 
 allowed = {
@@ -168,10 +169,10 @@ with open(sys.argv[1], encoding="utf-8") as source:
         values[key] = value
 required = {
     "FLASK_ENV": "production",
-    "SESSION_COOKIE_SECURE": "false",
+    "SESSION_COOKIE_SECURE": os.environ["SESSION_COOKIE_SECURE"],
     "USE_AWS_SECRETS": "true",
-    "AWS_SECRET_NAME": "cloudops/prod/mariadb",
-    "AWS_REGION": "eu-north-1",
+    "AWS_SECRET_NAME": os.environ["DB_SECRET_NAME"],
+    "AWS_REGION": os.environ["AWS_REGION"],
     "ENABLE_LAB_FAILURE_ENDPOINTS": "false",
 }
 if any(values.get(key) != value for key, value in required.items()):
@@ -188,12 +189,12 @@ done
 [[ -x "$VERIFY_SCRIPT" ]] || fail "$VERIFY_SCRIPT is not installed; obtain the deployment scripts from the approved repository commit first."
 
 # Prove the installed signing key is the stable Secrets Manager value without writing or logging either value.
-aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id cloudops/prod/flask-session-key --query SecretString --output text |
+aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$SESSION_SECRET_NAME" --query SecretString --output text |
     python3 -c 'import sys; p=sys.argv[1]; f=open(p,encoding="utf-8"); key=next((line.rstrip("\n").partition("=")[2] for line in f if line.startswith("SECRET_KEY=")),""); secret=sys.stdin.read(); secret=secret[:-1] if secret.endswith("\n") else secret; valid=bool(secret) and "\n" not in secret and "\r" not in secret and len(secret)>=32 and secret==key; print("Stable session signing secret validated.") if valid else sys.exit(1)' "$RUNTIME_ENV" ||
     fail 'runtime.env signing key does not match the stable Secrets Manager secret.'
 log 'Stable session signing secret validated without printing its value.'
 
-aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id cloudops/prod/mariadb --query SecretString --output text |
+aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$DB_SECRET_NAME" --query SecretString --output text |
     python3 -c 'import json,sys; d=json.load(sys.stdin); ok=all(isinstance(d.get(k),str) and d[k] for k in ("host","username","password")) and isinstance(d.get("dbname",d.get("database")),str) and bool(d.get("dbname",d.get("database"))); port=int(d.get("port",3306)); sys.exit(0 if ok and 0 < port < 65536 else 1)'
 log 'Database secret schema validated without persisting or printing its value.'
 
@@ -260,7 +261,7 @@ if [[ "$previous_kind" == legacy ]]; then
     prior_ready="$(curl --connect-timeout 3 --max-time 8 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:5000/ready || true)"
     [[ "$prior_health" == 200 && "$prior_ready" == 200 ]] || fail 'legacy container is not healthy and ready on port 5000; leaving it untouched.'
 elif [[ "$previous_kind" == managed ]]; then
-    [[ "$previous_image" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]] || fail 'managed prior image is not an immutable approved ECR digest.'
+    [[ "$previous_image" =~ ^"${ECR_URI}"@sha256:[0-9a-f]{64}$ ]] || fail 'managed prior image is not an immutable approved ECR digest.'
     [[ "$previous_version" =~ ^[0-9a-f]{12,40}$ ]] || fail 'managed prior container has no valid version label.'
     "$VERIFY_SCRIPT" --expected-image "$previous_image" --expected-version "$previous_version" \
         --container-name "$CONTAINER_NAME" --port 5000 --require-container-health --wait-seconds 0

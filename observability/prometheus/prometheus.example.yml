@@ -11,13 +11,13 @@ alerting:
 scrape_configs:
 - job_name: cloudops-app
   ec2_sd_configs:
-  - region: eu-north-1
+  - region: us-east-1
     port: 5000
     refresh_interval: 60s
     filters:
     - name: vpc-id
       values:
-      - vpc-080d46671dbdcacab
+      - vpc-00000000000000001
     - name: instance-state-name
       values:
       - running
@@ -33,13 +33,13 @@ scrape_configs:
     target_label: ec2_instance_id
 - job_name: cloudops-node
   ec2_sd_configs:
-  - region: eu-north-1
+  - region: us-east-1
     port: 9100
     refresh_interval: 60s
     filters:
     - name: vpc-id
       values:
-      - vpc-080d46671dbdcacab
+      - vpc-00000000000000001
     - name: instance-state-name
       values:
       - running
@@ -58,13 +58,13 @@ scrape_configs:
     target_label: ec2_instance_id
 - job_name: cloudops-ready
   ec2_sd_configs:
-  - region: eu-north-1
+  - region: us-east-1
     port: 5000
     refresh_interval: 60s
     filters:
     - name: vpc-id
       values:
-      - vpc-080d46671dbdcacab
+      - vpc-00000000000000001
     - name: instance-state-name
       values:
       - running

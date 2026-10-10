@@ -1,3 +1,13 @@
+import os
+from pathlib import Path
+
+os.environ["CLOUDOPS_CONFIG_FILE"] = str(Path(__file__).parent / "fixtures" / "deployment-config.json")
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy"))
+from cloudops_config import load, environment
+os.environ.update(environment(load()))
+
 import pytest
 from app import create_app
 from app.extensions import db

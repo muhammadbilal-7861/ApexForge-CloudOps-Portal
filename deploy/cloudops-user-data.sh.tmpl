@@ -84,18 +84,19 @@ bootstrap_exit() {
 trap 'bootstrap_error_line=$LINENO' ERR
 trap 'bootstrap_exit "$?" "$LINENO"' EXIT
 
-readonly AWS_REGION="@@AWS_REGION@@"
+@@CONFIG_EXPORTS@@
+readonly AWS_REGION
 readonly IMAGE_URI="@@IMAGE_URI@@"
 readonly APP_VERSION="@@APP_VERSION@@"
 readonly SOURCE_COMMIT="@@SOURCE_COMMIT@@"
-readonly SESSION_SECRET_NAME="cloudops/prod/flask-session-key"
-readonly DB_SECRET_NAME="cloudops/prod/mariadb"
-readonly LOG_GROUP="/cloudops/app"
-readonly RAW_BASE="https://raw.githubusercontent.com/muhammadbilal-7861/ApexForge-CloudOps-Portal/${SOURCE_COMMIT}/deploy"
+readonly SESSION_SECRET_NAME
+readonly DB_SECRET_NAME
+readonly LOG_GROUP="$LOG_GROUP_NAME"
+readonly RAW_BASE="https://raw.githubusercontent.com/${SOURCE_REPOSITORY}/${SOURCE_COMMIT}/deploy"
 readonly DEPLOY_SCRIPT_SHA256="@@DEPLOY_SCRIPT_SHA256@@"
 readonly VERIFY_SCRIPT_SHA256="@@VERIFY_SCRIPT_SHA256@@"
 
-[[ "$IMAGE_URI" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]
+[[ "$IMAGE_URI" =~ ^123456789012\.dkr\.ecr\.us-east-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]
 [[ "$APP_VERSION" =~ ^[0-9a-f]{12,40}$ ]]
 [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 bootstrap_event running
@@ -136,8 +137,8 @@ cat > /etc/cloudwatch-agent-cloudops.json <<'JSON'
     "logs_collected": {
       "files": {
         "collect_list": [
-          {"file_path": "/var/log/cloudops-bootstrap.log", "log_group_name": "/cloudops/app", "log_stream_name": "{instance_id}/bootstrap"},
-          {"file_path": "/var/log/cloudops-deploy.log", "log_group_name": "/cloudops/app", "log_stream_name": "{instance_id}/deploy"}
+          {"file_path": "/var/log/cloudops-bootstrap.log", "log_group_name": "@@LOG_GROUP_NAME@@", "log_stream_name": "{instance_id}/bootstrap"},
+          {"file_path": "/var/log/cloudops-deploy.log", "log_group_name": "@@LOG_GROUP_NAME@@", "log_stream_name": "{instance_id}/deploy"}
         ]
       }
     }
@@ -200,7 +201,7 @@ if [[ ! -e /etc/cloudops/runtime.env ]]; then
     {
         printf 'FLASK_ENV=production\n'
         printf 'SECRET_KEY=%s\n' "$session_secret"
-        printf 'SESSION_COOKIE_SECURE=false\n'
+        printf 'SESSION_COOKIE_SECURE=%s\n' "$SESSION_COOKIE_SECURE"
         printf 'USE_AWS_SECRETS=true\n'
         printf 'AWS_SECRET_NAME=%s\n' "$DB_SECRET_NAME"
         printf 'AWS_REGION=%s\n' "$AWS_REGION"

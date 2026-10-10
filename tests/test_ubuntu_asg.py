@@ -21,7 +21,7 @@ def reviewed_overrides():
     return renderer.render(source, encoded, COMMIT[:12])
 
 
-@pytest.mark.parametrize("subnet", ["subnet-08469c4e69b5c4d65", "subnet-05788ba98ca1096e6"])
+@pytest.mark.parametrize("subnet", ["subnet-00000000000000001", "subnet-00000000000000002"])
 def test_permission_request_preserves_reviewed_configuration_for_each_subnet(subnet):
     renderer = load_helper("render-launch-permission-check")
     result = renderer.render(reviewed_overrides(), "6", subnet)
@@ -32,7 +32,7 @@ def test_permission_request_preserves_reviewed_configuration_for_each_subnet(sub
     assert "InstanceType" not in result
     assert result["LaunchTemplate"]["Version"] == "6"
     assert result["NetworkInterfaces"][0]["SubnetId"] == subnet
-    assert result["NetworkInterfaces"][0]["Groups"] == ["sg-0f9613afd389c288d"]
+    assert result["NetworkInterfaces"][0]["Groups"] == ["sg-00000000000000001"]
     assert result["NetworkInterfaces"][0]["AssociatePublicIpAddress"] is False
     assert "MetadataOptions" not in result
     assert "IamInstanceProfile" not in result
@@ -44,7 +44,7 @@ def test_permission_request_preserves_reviewed_configuration_for_each_subnet(sub
     assert tags["Version"] == COMMIT[:12]
 
 
-@pytest.mark.parametrize("subnet", ["subnet-unapproved", "", "subnet-08469c4e69b5c4d65,subnet-05788ba98ca1096e6"])
+@pytest.mark.parametrize("subnet", ["subnet-unapproved", "", "subnet-00000000000000001,subnet-00000000000000002"])
 def test_permission_renderer_rejects_unapproved_or_ambiguous_subnet(subnet):
     renderer = load_helper("render-launch-permission-check")
     overrides = reviewed_overrides()
@@ -57,7 +57,7 @@ def test_permission_renderer_rejects_unreviewed_asg_tags(tags):
     renderer = load_helper("render-launch-permission-check")
     overrides = reviewed_overrides()
     with pytest.raises(ValueError, match="propagated tags"):
-        renderer.render(overrides, "6", "subnet-08469c4e69b5c4d65", tags)
+        renderer.render(overrides, "6", "subnet-00000000000000001", tags)
 
 
 @pytest.mark.parametrize("operation,code", [
@@ -71,12 +71,12 @@ def test_permission_check_never_launches_and_fails_closed_on_api_errors(tmp_path
     deploy.mkdir(parents=True)
     work = workspace / ".deploy-work"
     work.mkdir()
-    for name in ("validate-launch-permissions.sh", "render-launch-permission-check.py", "cloudops_ami.py", "cloudops_launch.py", "reviewed-ubuntu24.json"):
+    for name in ("validate-launch-permissions.sh", "render-launch-permission-check.py", "cloudops_ami.py", "cloudops_launch.py", "cloudops_config.py", "load-config.sh"):
         shutil.copyfile(ROOT / "deploy" / name, deploy / name)
     (deploy / "assert-deploy-context.sh").write_text("#!/bin/bash\nexit 0\n")
     (deploy / "verify-asg-candidate.sh").write_text("#!/bin/bash\nexit 0\n")
     (work / "launch-template-overrides.json").write_text(json.dumps(reviewed_overrides()))
-    review = json.loads((deploy / "reviewed-ubuntu24.json").read_text())
+    review = json.loads(Path(os.environ["CLOUDOPS_CONFIG_FILE"]).read_text())["reviewed_ami"]
     (work / "asg.json").write_text(json.dumps({"AutoScalingGroups": [{
         "AutoScalingGroupName": "asg-cloudops-app", "VPCZoneIdentifier": ",".join(review["private_subnets"]),
         "Tags": [{"Key": key, "Value": value, "PropagateAtLaunch": True} for key, value in review["asg_propagated_tags"].items()],
@@ -101,7 +101,7 @@ sys.exit(255)
     docker.chmod(0o755)
     calls = tmp_path / "calls.jsonl"
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", WORKSPACE=str(workspace),
-               AWS_CLI_IMAGE="test-aws", PYTHON_IMAGE="test-python", AWS_REGION="eu-north-1",
+               AWS_CLI_IMAGE="test-aws", PYTHON_IMAGE="test-python", AWS_REGION="us-east-1",
                CALLS=str(calls), ERROR_CODE=code, FAIL_OPERATION=operation)
     result = subprocess.run(["bash", "deploy/validate-launch-permissions.sh", "6"], cwd=workspace,
                             env=env, capture_output=True, text=True, timeout=10)
@@ -122,7 +122,7 @@ sys.exit(255)
             document = json.loads(path.read_text())
             assert document["DryRun"] is True
             subnets.append(document["NetworkInterfaces"][0]["SubnetId"])
-        assert set(subnets) == {"subnet-08469c4e69b5c4d65", "subnet-05788ba98ca1096e6"}
+        assert set(subnets) == {"subnet-00000000000000001", "subnet-00000000000000002"}
     else:
         assert result.returncode != 0
         assert not report.exists()
@@ -139,23 +139,23 @@ def test_jenkins_archives_preview_before_restricted_approval():
 
 
 def test_launch_iam_is_scoped_to_reviewed_image_subnets_role_and_tags():
-    policy = json.loads((ROOT / "deploy/iam/jenkins-cloudops-deploy-policy.json").read_text())
+    policy = load_helper("render-iam-policy").render(json.loads((ROOT / "deploy/iam/jenkins-cloudops-deploy-policy.json").read_text()), json.loads(Path(os.environ["CLOUDOPS_CONFIG_FILE"]).read_text()))
     statements = {item["Sid"]: item for item in policy["Statement"]}
     run = statements["LaunchOnlyReviewedCloudOpsResources"]
-    assert "arn:aws:ec2:eu-north-1::image/ami-0769f265f707fecc8" in run["Resource"]
-    assert not any("ami-09b67ca726bea7328" in resource for resource in run["Resource"])
+    assert "arn:aws:ec2:us-east-1::image/ami-00000000000000001" in run["Resource"]
+    assert not any("ami-00000000000000002" in resource for resource in run["Resource"])
     subnets = {resource.rsplit("/", 1)[-1] for resource in run["Resource"] if ":subnet/" in resource}
-    assert subnets == {"subnet-08469c4e69b5c4d65", "subnet-05788ba98ca1096e6"}
+    assert subnets == {"subnet-00000000000000001", "subnet-00000000000000002"}
     instance = statements["LaunchOnlyTaggedT3MicroWithImdsv2"]["Condition"]["StringEquals"]
     assert instance["ec2:InstanceType"] == "t3.micro"
     assert instance["ec2:MetadataHttpTokens"] == "required"
     assert instance["aws:RequestTag/Role"] == "app"
     tags = statements["TagOnlyCloudOpsResourcesDuringLaunch"]["Condition"]
     assert tags["StringEquals"]["ec2:CreateAction"] == "RunInstances"
-    assert tags["StringEquals"]["aws:RequestedRegion"] == "eu-north-1"
+    assert tags["StringEquals"]["aws:RequestedRegion"] == "us-east-1"
     assert set(tags["ForAllValues:StringEquals"]["aws:TagKeys"]) == {"Role", "Monitoring", "Version", "Environment", "Name", "Project", "aws:autoscaling:groupName"}
     passed_role = statements["PassOnlyCloudOpsAppRoleToEc2"]
-    assert passed_role["Resource"] == "arn:aws:iam::489502663059:role/CloudOpsEC2Role"
+    assert passed_role["Resource"] == "arn:aws:iam::123456789012:role/ExampleAppRole"
     assert passed_role["Condition"]["StringEquals"]["iam:PassedToService"] == "ec2.amazonaws.com"
 
 
@@ -196,9 +196,9 @@ if "test-python" in a:
 a=a[a.index("test-aws")+1:]
 with open(os.environ["CALLS"],"a") as log: log.write(json.dumps(a)+"\\n")
 if a[:2]==["sts","get-caller-identity"]:
-    print("489502663059" if a[a.index("--query")+1]=="Account" else "arn:aws:sts::489502663059:assumed-role/DevSecOpsToolsRole/test")
+    print("123456789012" if a[a.index("--query")+1]=="Account" else "arn:aws:sts::123456789012:assumed-role/ExampleToolsRole/test")
 elif a[:2]==["elbv2","describe-target-groups"]:
-    print("arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/test")
+    print("arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-cloudops-app/0000000000000001")
 elif a[:2]==["ssm","describe-instance-information"]:
     if os.environ["PING"]=="AccessDenied":
         print("AccessDenied",file=sys.stderr); sys.exit(254)
@@ -211,12 +211,12 @@ else: sys.exit(2)
     docker.chmod(0o755)
     calls = tmp_path / "calls.jsonl"
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", WORKSPACE=str(workspace),
-               AWS_CLI_IMAGE="test-aws", PYTHON_IMAGE="test-python", AWS_REGION="eu-north-1",
-               AWS_ACCOUNT_ID="489502663059", AWS_EXPECTED_ROLE="DevSecOpsToolsRole", SCM_BRANCH="main",
+               AWS_CLI_IMAGE="test-aws", PYTHON_IMAGE="test-python", AWS_REGION="us-east-1",
+               AWS_ACCOUNT_ID="123456789012", AWS_EXPECTED_ROLE="ExampleToolsRole", SCM_BRANCH="main",
                GIT_COMMIT_FULL=COMMIT, GIT_COMMIT_SHORT=COMMIT[:12], ECR_DEPLOY_IMAGE=IMAGE,
                ECR_IMAGE_DIGEST="sha256:" + "a" * 64, CALLS=str(calls), PING=ping,
                CLOUDOPS_REQUIRE_BOOTSTRAP_COMPLETE="true")
-    result = subprocess.run(["bash", str(script), "verify", "i-11111111111111111"], cwd=workspace,
+    result = subprocess.run(["bash", str(script), "verify", "i-0000000000000000e"], cwd=workspace,
                             env=env, capture_output=True, text=True, timeout=10)
     requests = [json.loads(line) for line in calls.read_text().splitlines()]
     submitted = [request for request in requests if request[:2] == ["ssm", "send-command"]]

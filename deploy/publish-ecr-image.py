@@ -25,8 +25,7 @@ def _checked(runner: Runner, command: list[str], *, env: Mapping[str, str] | Non
              input_text: str | None = None) -> str:
     result = runner(command, env=env, input=input_text, capture_output=True, text=True, check=False)
     if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
-        raise PublishError(f"Command failed ({' '.join(command)}): {detail}")
+        raise PublishError(f"Command failed ({command[0]}): exit status {result.returncode}; raw output withheld")
     return result.stdout.strip()
 
 
@@ -43,8 +42,7 @@ def _aws_cli(runner: Runner, config: Mapping[str, str], *args: str) -> subproces
 def _aws_text(runner: Runner, config: Mapping[str, str], *args: str) -> str:
     result = _aws_cli(runner, config, *args)
     if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
-        raise PublishError(f"AWS CLI {' '.join(args)} failed: {detail}")
+        raise PublishError(f"AWS CLI {args[0]} {args[1]} failed: exit status {result.returncode}; raw output withheld")
     return result.stdout.strip()
 
 
@@ -59,8 +57,9 @@ def _describe_tag(runner: Runner, config: Mapping[str, str]) -> str | None:
         detail = f"{result.stdout}\n{result.stderr}"
         if IMAGE_NOT_FOUND_PATTERN.search(detail):
             return None
-        message = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
-        raise PublishError(f"AWS ECR DescribeImages failed: {message}")
+        code = re.search(r"\b[A-Za-z]+(?:Exception|Error)\b", detail)
+        safe_code = code[0] if code else "API failure"
+        raise PublishError(f"AWS ECR DescribeImages failed: {safe_code}; raw output withheld")
     digest = result.stdout.strip()
     if not DIGEST_PATTERN.fullmatch(digest):
         raise PublishError(f"ECR returned an invalid digest for tag {config['GIT_COMMIT_SHORT']}.")

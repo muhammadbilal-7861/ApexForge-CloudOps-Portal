@@ -3,6 +3,8 @@
 # This writes a launch-template version only; it never changes capacity/defaults or launches instances.
 set -Eeuo pipefail
 set +x
+# Validated non-secret inventory is required even for read-only AWS operations.
+source "${WORKSPACE:?}/deploy/load-config.sh"
 : "${WORKSPACE:?}" "${PYTHON_IMAGE:?}" "${ECR_DEPLOY_IMAGE:?}" "${GIT_COMMIT_FULL:?}" "${GIT_COMMIT_SHORT:?}" "${AWS_CLI_IMAGE:?}" "${AWS_REGION:?}"
 umask 077
 bash deploy/assert-deploy-context.sh
@@ -13,7 +15,7 @@ work_dir="$WORKSPACE/.deploy-work"
 rm -f "$WORKSPACE/reports/asg-launch-candidate.json" "$WORKSPACE/reports/asg-launch-permissions.json"
 python_cli() {
     docker run --rm --volumes-from jenkins --user "$(id -u):$(id -g)" --workdir "$WORKSPACE" \
-        "$PYTHON_IMAGE" python "$@"
+        --env CLOUDOPS_CONFIG_FILE "$PYTHON_IMAGE" python "$@"
 }
 python_cli deploy/render-cloudops-user-data.py --template deploy/cloudops-user-data.sh.tmpl \
     --deploy-script deploy/cloudops-deploy.sh --verify-script deploy/cloudops-verify.sh \
@@ -36,7 +38,7 @@ aws_cli() {
 # Omitting SourceVersion is intentional: AWS then stores only the allowlisted
 # parameters. Inheriting v5 would retain its AvailabilityZoneId restriction.
 status=0
-aws_cli ec2 create-launch-template-version --dry-run --launch-template-id lt-028eb222c6fcfffc1 \
+aws_cli ec2 create-launch-template-version --dry-run --launch-template-id "${LAUNCH_TEMPLATE_ID}" \
     --launch-template-data "file://$work_dir/launch-template-overrides.json" \
     > /dev/null 2> "$work_dir/launch-permission-error" || status=$?
 code="$(sed -n 's/^.*An error occurred (\([A-Za-z0-9]*\)) when calling .*$/\1/p' "$work_dir/launch-permission-error")"
@@ -45,7 +47,7 @@ if ((status == 0)) || [[ "$code" != DryRunOperation ]]; then
     exit 1
 fi
 candidate_version="$(aws_cli ec2 create-launch-template-version \
-    --launch-template-id lt-028eb222c6fcfffc1 --version-description "CloudOps $GIT_COMMIT_SHORT clean candidate" \
+    --launch-template-id "${LAUNCH_TEMPLATE_ID}" --version-description "CloudOps $GIT_COMMIT_SHORT clean candidate" \
     --launch-template-data "file://$work_dir/launch-template-overrides.json" \
     --query 'LaunchTemplateVersion.VersionNumber' --output text)"
 [[ "$candidate_version" =~ ^[0-9]+$ && "$candidate_version" -gt 5 ]] || { printf 'Invalid candidate version from EC2.\n' >&2; exit 1; }

@@ -24,6 +24,7 @@ install -m 0644 "$here/config.alloy" /etc/cloudops-alloy/config.alloy
 printf 'EC2_INSTANCE_ID=%s\nCLOUDOPS_ENVIRONMENT=%s\nCLOUDOPS_IMAGE_VERSION=%s\nLOKI_PUSH_URL=http://%s:3100/loki/api/v1/push\n' "$iid" "$CLOUDOPS_ENVIRONMENT" "$image" "$LOKI_PRIVATE_IP" > /etc/cloudops-alloy/runtime.env
 chmod 0644 /etc/cloudops-alloy/runtime.env
 set -a
+# shellcheck source=/dev/null
 source /etc/cloudops-alloy/runtime.env
 set +a
 /usr/local/bin/alloy validate /etc/cloudops-alloy/config.alloy

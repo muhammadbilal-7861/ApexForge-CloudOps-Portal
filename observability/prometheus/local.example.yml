@@ -1,0 +1,6 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: local-cloudops
+    static_configs:
+      - targets: ["app:5000"]

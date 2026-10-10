@@ -9,14 +9,14 @@ import re
 import shlex
 
 
-IMAGE_RE = re.compile(
-    r"^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/"
-    r"apexforge-cloudops-portal@sha256:[0-9a-f]{64}$"
-)
+from cloudops_ami import CONFIG, ENV
+
+IMAGE_RE = re.compile(re.escape(ENV["ECR_URI"]) + r"@sha256:[0-9a-f]{64}\Z")
+
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 VERSION_RE = re.compile(r"^[0-9a-f]{12,40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-RAW_ROOT = "https://raw.githubusercontent.com/muhammadbilal-7861/ApexForge-CloudOps-Portal"
+RAW_ROOT = "https://raw.githubusercontent.com/" + CONFIG["SOURCE_REPOSITORY"]
 
 
 def render(args: argparse.Namespace) -> dict:
@@ -37,7 +37,8 @@ def render(args: argparse.Namespace) -> dict:
         raise ValueError("canary preflight must target exactly one instance")
 
     base = f"{RAW_ROOT}/{args.commit}/deploy"
-    commands = ["set -Eeuo pipefail"]
+    commands = ["set -Eeuo pipefail", "set +x"]
+    commands.extend(f"export {key}={shlex.quote(value)}" for key, value in sorted(ENV.items()))
     if args.mode == "preflight":
         scripts = (("cloudops-canary-preflight.sh", args.preflight_sha256),)
     else:

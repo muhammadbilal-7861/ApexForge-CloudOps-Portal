@@ -5,8 +5,12 @@
       "Sid": "VerifyReviewedPublicCanonicalImage",
       "Effect": "Allow",
       "Action": "ssm:GetParameter",
-      "Resource": "arn:aws:ssm:eu-north-1::parameter/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
-      "Condition": {"StringEquals": {"aws:RequestedRegion": "eu-north-1"}}
+      "Resource": "arn:aws:ssm:${AWS_REGION}::parameter/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "${AWS_REGION}"
+        }
+      }
     },
     {
       "Sid": "ReadOnlyDeploymentDiscovery",
@@ -33,7 +37,12 @@
         "ssm:ListCommands",
         "secretsmanager:DescribeSecret"
       ],
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "${AWS_REGION}"
+        }
+      }
     },
     {
       "Sid": "ReadCloudOpsEcrImageMetadata",
@@ -42,35 +51,35 @@
         "ecr:DescribeImages",
         "ecr:DescribeRepositories"
       ],
-      "Resource": "arn:aws:ecr:eu-north-1:489502663059:repository/apexforge-cloudops-portal"
+      "Resource": "arn:aws:ecr:${AWS_REGION}:${AWS_ACCOUNT_ID}:repository/${ECR_REPOSITORY}"
     },
     {
       "Sid": "ValidateCloudOpsDatabaseSecretShape",
       "Effect": "Allow",
       "Action": "secretsmanager:GetSecretValue",
-      "Resource": "arn:aws:secretsmanager:eu-north-1:489502663059:secret:cloudops/prod/mariadb-*"
+      "Resource": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${DB_SECRET_NAME}-*"
     },
     {
       "Sid": "CreateNumericCloudOpsLaunchTemplateVersion",
       "Effect": "Allow",
       "Action": "ec2:CreateLaunchTemplateVersion",
-      "Resource": "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1"
+      "Resource": "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:launch-template/${LAUNCH_TEMPLATE_ID}"
     },
     {
       "Sid": "LaunchOnlyReviewedCloudOpsResources",
       "Effect": "Allow",
       "Action": "ec2:RunInstances",
       "Resource": [
-        "arn:aws:ec2:eu-north-1::image/ami-0769f265f707fecc8",
-        "arn:aws:ec2:eu-north-1:489502663059:subnet/subnet-08469c4e69b5c4d65",
-        "arn:aws:ec2:eu-north-1:489502663059:subnet/subnet-05788ba98ca1096e6",
-        "arn:aws:ec2:eu-north-1:489502663059:security-group/sg-0f9613afd389c288d",
-        "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1"
+        "arn:aws:ec2:${AWS_REGION}::image/${REVIEWED_AMI_ID}",
+        "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:subnet/${SUBNET_ONE}",
+        "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:subnet/${SUBNET_TWO}",
+        "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:security-group/${APP_SECURITY_GROUP_ID}",
+        "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:launch-template/${LAUNCH_TEMPLATE_ID}"
       ],
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "eu-north-1",
-          "ec2:LaunchTemplate": "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1"
+          "aws:RequestedRegion": "${AWS_REGION}",
+          "ec2:LaunchTemplate": "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:launch-template/${LAUNCH_TEMPLATE_ID}"
         }
       }
     },
@@ -78,11 +87,11 @@
       "Sid": "LaunchOnlyTaggedT3MicroWithImdsv2",
       "Effect": "Allow",
       "Action": "ec2:RunInstances",
-      "Resource": "arn:aws:ec2:eu-north-1:489502663059:instance/*",
+      "Resource": "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:instance/*",
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "eu-north-1",
-          "ec2:LaunchTemplate": "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1",
+          "aws:RequestedRegion": "${AWS_REGION}",
+          "ec2:LaunchTemplate": "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:launch-template/${LAUNCH_TEMPLATE_ID}",
           "ec2:InstanceType": "t3.micro",
           "ec2:MetadataHttpTokens": "required",
           "aws:RequestTag/Role": "app"
@@ -94,13 +103,13 @@
       "Effect": "Allow",
       "Action": "ec2:RunInstances",
       "Resource": [
-        "arn:aws:ec2:eu-north-1:489502663059:volume/*",
-        "arn:aws:ec2:eu-north-1:489502663059:network-interface/*"
+        "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:volume/*",
+        "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:network-interface/*"
       ],
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "eu-north-1",
-          "ec2:LaunchTemplate": "arn:aws:ec2:eu-north-1:489502663059:launch-template/lt-028eb222c6fcfffc1"
+          "aws:RequestedRegion": "${AWS_REGION}",
+          "ec2:LaunchTemplate": "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:launch-template/${LAUNCH_TEMPLATE_ID}"
         }
       }
     },
@@ -109,19 +118,32 @@
       "Effect": "Allow",
       "Action": "ec2:CreateTags",
       "Resource": [
-        "arn:aws:ec2:eu-north-1:489502663059:instance/*",
-        "arn:aws:ec2:eu-north-1:489502663059:volume/*"
+        "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:instance/*",
+        "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:volume/*"
       ],
       "Condition": {
-        "StringEquals": {"aws:RequestedRegion": "eu-north-1", "ec2:CreateAction": "RunInstances"},
-        "ForAllValues:StringEquals": {"aws:TagKeys": ["Role", "Monitoring", "Version", "Environment", "Name", "Project", "aws:autoscaling:groupName"]}
+        "StringEquals": {
+          "aws:RequestedRegion": "${AWS_REGION}",
+          "ec2:CreateAction": "RunInstances"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "Role",
+            "Monitoring",
+            "Version",
+            "Environment",
+            "Name",
+            "Project",
+            "aws:autoscaling:groupName"
+          ]
+        }
       }
     },
     {
       "Sid": "PassOnlyCloudOpsAppRoleToEc2",
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::489502663059:role/CloudOpsEC2Role",
+      "Resource": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/${APP_ROLE_NAME}",
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": "ec2.amazonaws.com"
@@ -136,22 +158,22 @@
         "autoscaling:StartInstanceRefresh",
         "autoscaling:CancelInstanceRefresh"
       ],
-      "Resource": "arn:aws:autoscaling:eu-north-1:489502663059:autoScalingGroup:*:autoScalingGroupName/asg-cloudops-app"
+      "Resource": "arn:aws:autoscaling:${AWS_REGION}:${AWS_ACCOUNT_ID}:autoScalingGroup:*:autoScalingGroupName/${ASG_NAME}"
     },
     {
       "Sid": "SendCommandsToApprovedCanary",
       "Effect": "Allow",
       "Action": "ssm:SendCommand",
       "Resource": [
-        "arn:aws:ssm:eu-north-1::document/AWS-RunShellScript",
-        "arn:aws:ec2:eu-north-1:489502663059:instance/i-02777a62f2a65bc1e"
+        "arn:aws:ssm:${AWS_REGION}::document/AWS-RunShellScript",
+        "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:instance/${CANARY_INSTANCE_ID}"
       ]
     },
     {
       "Sid": "SendCommandsToTaggedCloudOpsFleet",
       "Effect": "Allow",
       "Action": "ssm:SendCommand",
-      "Resource": "arn:aws:ec2:eu-north-1:489502663059:instance/*",
+      "Resource": "arn:aws:ec2:${AWS_REGION}:${AWS_ACCOUNT_ID}:instance/*",
       "Condition": {
         "StringEquals": {
           "ssm:resourceTag/Role": "app"
@@ -162,7 +184,37 @@
       "Sid": "ReadOnlySsmCommandOutput",
       "Effect": "Allow",
       "Action": "ssm:GetCommandInvocation",
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "${AWS_REGION}"
+        }
+      }
+    },
+    {
+      "Sid": "LoginToRegionalEcr",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "${AWS_REGION}"
+        }
+      }
+    },
+    {
+      "Sid": "PublishOnlyReviewedRepository",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutImage",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": "arn:aws:ecr:${AWS_REGION}:${AWS_ACCOUNT_ID}:repository/${ECR_REPOSITORY}"
     }
   ]
 }

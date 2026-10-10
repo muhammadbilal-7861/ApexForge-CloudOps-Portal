@@ -7,6 +7,7 @@ Only the uniquely labeled outer daemon is created/removed on the caller's daemon
 """
 
 import json
+import sys
 import re
 import subprocess
 import time
@@ -14,7 +15,7 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-REGISTRY = "489502663059.dkr.ecr.eu-north-1.amazonaws.com"
+REGISTRY = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
 REPOSITORY = REGISTRY + "/apexforge-cloudops-portal"
 SECRET = "rehearsal-only-signing-key-0123456789abcdef"
 LABEL = "org.apexforge.canary-rehearsal"
@@ -62,6 +63,10 @@ def run(command, *, check=True, timeout=180, **kwargs):
 
 
 def main():
+    sys.path.insert(0, str(ROOT / "deploy"))
+    from cloudops_config import environment, load
+    settings = environment(load(ROOT / "tests/fixtures/deployment-config.json"))
+    config_args = [part for key, value in sorted(settings.items()) for part in ("--env", key + "=" + value)]
     reports = ROOT / "reports" / "canary-docker-rehearsal"
     reports.mkdir(parents=True, exist_ok=True)
     owner = uuid.uuid4().hex
@@ -115,7 +120,7 @@ def main():
             inside("chmod", "755", "/usr/local/sbin/" + name)
         write_remote("/rehearsal/runtime.env", "\n".join([
             "FLASK_ENV=production", "SECRET_KEY=" + SECRET, "SESSION_COOKIE_SECURE=false",
-            "USE_AWS_SECRETS=true", "AWS_SECRET_NAME=cloudops/prod/mariadb", "AWS_REGION=eu-north-1",
+            "USE_AWS_SECRETS=true", "AWS_SECRET_NAME=cloudops/prod/mariadb", "AWS_REGION=us-east-1",
             "ENABLE_LAB_FAILURE_ENDPOINTS=false", "",
         ]))
         inside("chmod", "600", "/rehearsal/runtime.env")
@@ -149,11 +154,11 @@ def main():
             assert len(old_id) == 64
             assert short_id == old_id[:12]
             result = run([
-                "docker", "exec", "--env", "CLOUDOPS_RUNTIME_ENV=/rehearsal/runtime.env",
+                "docker", "exec", *config_args, "--env", "CLOUDOPS_RUNTIME_ENV=/rehearsal/runtime.env",
                 "--env", "CLOUDOPS_CANDIDATE_WAIT_SECONDS=25", "--env", "CLOUDOPS_ALB_WAIT_SECONDS=10",
                 outer, "bash", "/usr/local/sbin/cloudops-deploy.sh", image, f"{index + 1:040x}",
-                "--target-group-arn", "arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/rehearsal",
-                "--instance-id", "i-0123456789abcdef0",
+                "--target-group-arn", "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-cloudops-app/0000000000000001",
+                "--instance-id", "i-0000000000000000a",
             ], check=False, timeout=150)
             (reports / (mode + ".log")).write_text(result.stdout + result.stderr)
             assert (result.returncode == 0) == (mode == "success"), result.stdout + result.stderr

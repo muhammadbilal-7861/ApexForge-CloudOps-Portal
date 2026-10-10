@@ -6,13 +6,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
+import shlex
 from pathlib import Path
 
 
-IMAGE_RE = re.compile(
-    r"^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/"
-    r"apexforge-cloudops-portal@sha256:[0-9a-f]{64}$"
-)
+from cloudops_ami import CONFIG, ENV
+
+IMAGE_RE = re.compile(re.escape(ENV["ECR_URI"]) + r"@sha256:[0-9a-f]{64}\Z")
+
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 VERSION_RE = re.compile(r"^[0-9a-f]{12,40}$")
 
@@ -25,13 +26,15 @@ def render(template: str, *, image: str, version: str, commit: str, deploy_scrip
     if not commit.startswith(version):
         raise ValueError("version must identify the source commit")
     values = {
-        "@@AWS_REGION@@": "eu-north-1",
+        "@@AWS_REGION@@": CONFIG["AWS_REGION"],
         "@@IMAGE_URI@@": image,
         "@@APP_VERSION@@": version,
         "@@SOURCE_COMMIT@@": commit,
         "@@DEPLOY_SCRIPT_SHA256@@": hashlib.sha256(deploy_script).hexdigest(),
         "@@VERIFY_SCRIPT_SHA256@@": hashlib.sha256(verify_script).hexdigest(),
     }
+    values["@@CONFIG_EXPORTS@@"] = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in sorted(ENV.items()))
+    values.update({"@@" + key + "@@": value for key, value in ENV.items()})
     for token, value in values.items():
         template = template.replace(token, value)
     if "@@" in template:
