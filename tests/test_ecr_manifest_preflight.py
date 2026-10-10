@@ -56,7 +56,7 @@ def preflight_harness(tmp_path: Path) -> dict[str, object]:
     signing_secret = "test-stable-session-signing-key-0123456789abcdef"
     runtime_env.write_text(
         "FLASK_ENV=production\nSECRET_KEY=" + signing_secret + "\nSESSION_COOKIE_SECURE=false\n"
-        "USE_AWS_SECRETS=true\nAWS_SECRET_NAME=cloudops/prod/mariadb\nAWS_REGION=eu-north-1\n"
+        "USE_AWS_SECRETS=true\nAWS_SECRET_NAME=cloudops/prod/mariadb\nAWS_REGION=us-east-1\n"
         "ENABLE_LAB_FAILURE_ENDPOINTS=false\n",
         encoding="utf-8",
     )
@@ -128,9 +128,9 @@ def run_preflight(
         "TEST_ECR_FAILURE": "true" if fail_ecr else "false",
         "TEST_ALB_FAILURE": "true" if fail_alb else "false",
     })
-    image = f"489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal@{image_digest}"
+    image = f"123456789012.dkr.ecr.us-east-1.amazonaws.com/apexforge-cloudops-portal@{image_digest}"
     return subprocess.run(["bash", str(PREFLIGHT), image,
-                           "arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/abc"],
+                           "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-cloudops-app/0000000000000001"],
                           env=env, capture_output=True, text=True, timeout=20)
 
 

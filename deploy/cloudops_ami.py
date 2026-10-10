@@ -1,11 +1,13 @@
 """Pinned public-image provenance and launch configuration checks (no AWS writes)."""
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
-from pathlib import Path
 
-REVIEW = json.loads(Path(__file__).with_name("reviewed-ubuntu24.json").read_text(encoding="utf-8"))
+from cloudops_config import load, environment
+
+CONFIG = load()
+ENV = environment(CONFIG)
+REVIEW = CONFIG["reviewed_ami"]
 
 
 def validate_ami(payload: dict, parameter: dict | None = None) -> dict:
@@ -37,7 +39,7 @@ def validate_ami(payload: dict, parameter: dict | None = None) -> dict:
         item = parameter.get("Parameter", {})
         if (item.get("Name") != REVIEW["ssm_parameter"] or item.get("Version") != REVIEW["ssm_parameter_version"]
                 or item.get("Value") != REVIEW["image_id"]
-                or item.get("ARN") != "arn:aws:ssm:eu-north-1::parameter" + REVIEW["ssm_parameter"]):
+                or item.get("ARN") != f"arn:aws:ssm:{CONFIG['AWS_REGION']}::parameter" + REVIEW["ssm_parameter"]):
             raise ValueError("public SSM parameter version does not match reviewed image")
     return image
 
@@ -45,8 +47,8 @@ def validate_ami(payload: dict, parameter: dict | None = None) -> dict:
 def validate_profile(profile: dict | None) -> dict:
     profile = profile or {}
     if not profile or (profile.get("Arn") and profile["Arn"] != REVIEW["instance_profile_arn"]):
-        raise ValueError("launch template must use the approved CloudOpsEC2Role instance profile")
-    if profile.get("Name") and profile["Name"] != "CloudOpsEC2Role":
+        raise ValueError("launch template must use the approved ExampleAppRole instance profile")
+    if profile.get("Name") and profile["Name"] != CONFIG["INSTANCE_PROFILE_NAME"]:
         raise ValueError("launch template has an unexpected instance profile name")
     if not (profile.get("Arn") or profile.get("Name")):
         raise ValueError("instance profile has no name or ARN")

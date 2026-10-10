@@ -8,25 +8,18 @@ import json
 import sys
 from pathlib import Path
 
-from cloudops_ami import REVIEW, validate_ami, validate_source
+from cloudops_ami import REVIEW, CONFIG, validate_ami, validate_source
 
 
 EXPECTED = {
-    "region": "eu-north-1",
-    "account": "489502663059",
-    "vpc": "vpc-080d46671dbdcacab",
-    "app_subnets": {"subnet-08469c4e69b5c4d65", "subnet-05788ba98ca1096e6"},
-    "alb_name": "alb-load",
-    "target_group_name": "tg-cloudops-app",
-    "target_group_port": 5000,
-    "target_group_path": "/ready",
-    "asg_name": "asg-cloudops-app",
-    "launch_template_id": "lt-028eb222c6fcfffc1",
-    "ami_id": REVIEW["image_id"],
-    "canary_instance_id": "i-02777a62f2a65bc1e",
-    "observability_instance_id": "i-0c550edbaa5ecbdff",
-    "instance_profile": "CloudOpsEC2Role",
-    "log_group": "/cloudops/app",
+    "region": CONFIG["AWS_REGION"], "account": CONFIG["AWS_ACCOUNT_ID"],
+    "vpc": CONFIG["VPC_ID"], "app_subnets": set(CONFIG["PRIVATE_SUBNET_IDS"]),
+    "alb_name": CONFIG["ALB_NAME"], "target_group_name": CONFIG["TARGET_GROUP_NAME"],
+    "target_group_port": 5000, "target_group_path": "/ready", "asg_name": CONFIG["ASG_NAME"],
+    "launch_template_id": CONFIG["LAUNCH_TEMPLATE_ID"], "ami_id": REVIEW["image_id"],
+    "canary_instance_id": CONFIG["CANARY_INSTANCE_ID"],
+    "observability_instance_id": CONFIG["OBSERVABILITY_INSTANCE_ID"],
+    "instance_profile": CONFIG["INSTANCE_PROFILE_NAME"], "log_group": CONFIG["LOG_GROUP_NAME"],
 }
 
 
@@ -106,6 +99,7 @@ def validate_common(directory: Path, mode: str) -> tuple[str, list[str]]:
     target_group = one(read_json(directory, "target-group.json").get("TargetGroups", []), "target group")
     if (
         target_group.get("TargetGroupName") != EXPECTED["target_group_name"]
+        or target_group.get("TargetGroupArn") != CONFIG["TARGET_GROUP_ARN"]
         or target_group.get("Port") != EXPECTED["target_group_port"]
         or target_group.get("HealthCheckPath") != EXPECTED["target_group_path"]
         or target_group.get("VpcId") != EXPECTED["vpc"]
@@ -145,7 +139,7 @@ def validate_common(directory: Path, mode: str) -> tuple[str, list[str]]:
         if app_instance.get("MetadataOptions", {}).get("HttpTokens") != "required":
             raise PreflightError("canary EC2 must require IMDSv2 before using its instance role from the host-network container")
         if profile_name(app_instance) != EXPECTED["instance_profile"]:
-            raise PreflightError("canary EC2 is not using the expected CloudOpsEC2Role instance profile")
+            raise PreflightError("canary EC2 is not using the expected ExampleAppRole instance profile")
         ping = read_json(directory, "canary-ssm.json").get("InstanceInformationList", [])
         if len(ping) != 1 or ping[0].get("PingStatus") != "Online":
             raise PreflightError("canary SSM agent is not Online; prepare/repair SSM before requesting deployment")

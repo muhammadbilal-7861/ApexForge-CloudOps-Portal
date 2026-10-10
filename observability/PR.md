@@ -1,3 +1,5 @@
+> Historical engineering notes: resource identifiers below have been replaced with synthetic examples. They are not current deployment instructions or verified live resources. Use [the reusable configuration guide](../docs/CONFIGURATION.md) and reviewed private inventory.
+
 # Draft PR: Reconcile existing CloudOps observability without replacing storage
 
 The existing monitoring EC2 stack has unknown Compose paths, installed versions and persistent mounts. Add an inventory-first reconciliation plan that reuses the current project and preserves Prometheus TSDB, Grafana data sources/dashboards and Loki storage.

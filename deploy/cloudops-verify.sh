@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+set +x
+: "${AWS_REGION:?}" "${AWS_ACCOUNT_ID:?}" "${ECR_URI:?}" "${ECR_REGISTRY:?}" "${TARGET_GROUP_ARN:?}" "${DB_SECRET_NAME:?}" "${SESSION_SECRET_NAME:?}" "${LOG_GROUP_NAME:?}" "${SESSION_COOKIE_SECURE:?}"
 
 expected_image=""
 expected_version=""
@@ -33,7 +35,8 @@ while (($#)); do
     esac
 done
 
-[[ "$expected_image" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]] || { printf 'Invalid immutable ECR image reference.\n' >&2; exit 2; }
+[[ -z "$target_group_arn" || "$target_group_arn" == "$TARGET_GROUP_ARN" ]] || { printf 'Unexpected target group identity.\n' >&2; exit 2; }
+[[ "$expected_image" =~ ^"${ECR_URI}"@sha256:[0-9a-f]{64}$ ]] || { printf 'Invalid immutable ECR image reference.\n' >&2; exit 2; }
 [[ "$expected_version" =~ ^[0-9a-f]{12,40}$ ]] || { printf 'Invalid application version.\n' >&2; exit 2; }
 [[ "$container_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || { printf 'Invalid container name.\n' >&2; exit 2; }
 if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || ((port == 0 || port >= 65536)); then
@@ -82,7 +85,7 @@ while :; do
     target_state=not-required
     if [[ -n "$target_group_arn" ]]; then
         target_state="$(aws elbv2 describe-target-health \
-            --region eu-north-1 \
+            --region "$AWS_REGION" \
             --target-group-arn "$target_group_arn" \
             --targets "Id=$instance_id,Port=5000" \
             --query 'TargetHealthDescriptions[0].TargetHealth.State' \

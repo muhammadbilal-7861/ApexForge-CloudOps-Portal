@@ -28,3 +28,10 @@ credentials
 *.key
 *.tfstate
 *.tfstate.*
+deploy/environment.json
+deploy/environment.*.json
+*.tfplan
+*.p12
+*.pfx
+*.bak
+*.backup

@@ -1,3 +1,5 @@
+> Historical engineering notes: resource identifiers below have been replaced with synthetic examples. They are not current deployment instructions or verified live resources. Use [the reusable configuration guide](../docs/CONFIGURATION.md) and reviewed private inventory.
+
 # Local validation evidence
 
 Validated locally on 2026-10-02 (Windows). Official upstream Windows release binaries were downloaded outside the repository: Prometheus/promtool 3.15.0, Alertmanager/amtool 0.34.1 and Alloy 1.20.1. These are validation tool versions, NOT claims about the installed EC2 images and NOT a server upgrade recommendation. Repeat checks with inventoried server versions before reconciliation.

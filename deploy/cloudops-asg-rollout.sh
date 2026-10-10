@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 set +x
+# Validated non-secret inventory is required even for read-only AWS operations.
+source "${WORKSPACE:?}/deploy/load-config.sh"
 
 : "${WORKSPACE:?Jenkins WORKSPACE is required}"
 : "${AWS_CLI_IMAGE:?AWS_CLI_IMAGE is required}"
@@ -17,8 +19,9 @@ bash deploy/assert-deploy-context.sh
 bash deploy/collect-cloudops-preflight.sh asg
 
 work_dir="$WORKSPACE/.deploy-work"
-asg_name=asg-cloudops-app
-launch_template_id=lt-028eb222c6fcfffc1
+: "${ASG_NAME:?}" "${LAUNCH_TEMPLATE_ID:?}"
+asg_name="$ASG_NAME"
+launch_template_id="$LAUNCH_TEMPLATE_ID"
 aws_cli() {
     docker run --rm \
         --network host \
@@ -33,7 +36,7 @@ python_cli() {
         --volumes-from jenkins \
         --user "$(id -u):$(id -g)" \
         --workdir "$WORKSPACE" \
-        "$PYTHON_IMAGE" python "$@"
+        --env CLOUDOPS_CONFIG_FILE "$PYTHON_IMAGE" python "$@"
 }
 
 capacity_snapshot="$(aws_cli autoscaling describe-auto-scaling-groups \
@@ -49,7 +52,7 @@ if ((old_desired == 0)) && ! ((old_min == 0 && old_max == 0)); then
     exit 1
 fi
 
-target_group_arn="$(aws_cli elbv2 describe-target-groups --names tg-cloudops-app --query 'TargetGroups[0].TargetGroupArn' --output text)"
+target_group_arn="$(aws_cli elbv2 describe-target-groups --names "${TARGET_GROUP_NAME}" --query 'TargetGroups[0].TargetGroupArn' --output text)"
 overrides_file="$work_dir/launch-template-overrides.json"
 chmod 700 "$work_dir"
 

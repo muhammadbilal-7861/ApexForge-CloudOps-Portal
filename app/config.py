@@ -5,7 +5,7 @@ import secrets
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 280, "pool_timeout": 5, "connect_args": {"connect_timeout": 5}}
+    SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 280, "pool_timeout": 5, "hide_parameters": True, "connect_args": {"connect_timeout": 5}}
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"

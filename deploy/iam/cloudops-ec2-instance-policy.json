@@ -5,7 +5,12 @@
       "Sid": "PullOnlyCloudOpsPortalImage",
       "Effect": "Allow",
       "Action": "ecr:GetAuthorizationToken",
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "${AWS_REGION}"
+        }
+      }
     },
     {
       "Sid": "DownloadCloudOpsPortalImage",
@@ -15,15 +20,15 @@
         "ecr:GetDownloadUrlForLayer",
         "ecr:BatchGetImage"
       ],
-      "Resource": "arn:aws:ecr:eu-north-1:489502663059:repository/apexforge-cloudops-portal"
+      "Resource": "arn:aws:ecr:${AWS_REGION}:${AWS_ACCOUNT_ID}:repository/${ECR_REPOSITORY}"
     },
     {
       "Sid": "ReadCloudOpsRuntimeSecrets",
       "Effect": "Allow",
       "Action": "secretsmanager:GetSecretValue",
       "Resource": [
-        "arn:aws:secretsmanager:eu-north-1:489502663059:secret:cloudops/prod/mariadb-*",
-        "arn:aws:secretsmanager:eu-north-1:489502663059:secret:cloudops/prod/flask-session-key-*"
+        "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${DB_SECRET_NAME}-*",
+        "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${SESSION_SECRET_NAME}-*"
       ]
     },
     {
@@ -33,20 +38,29 @@
         "logs:CreateLogStream",
         "logs:PutLogEvents"
       ],
-      "Resource": "arn:aws:logs:eu-north-1:489502663059:log-group:/cloudops/app:log-stream:*"
+      "Resource": "arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:${LOG_GROUP_NAME}:log-stream:*"
     },
     {
       "Sid": "ReadOnlyCloudOpsTargetHealth",
       "Effect": "Allow",
       "Action": "elasticloadbalancing:DescribeTargetHealth",
       "Resource": "*",
-      "Condition": {"StringEquals": {"aws:RequestedRegion": "eu-north-1"}}
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "${AWS_REGION}"
+        }
+      }
     },
     {
       "Sid": "ConfirmPrecreatedCloudOpsLogGroup",
       "Effect": "Allow",
       "Action": "logs:DescribeLogGroups",
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "${AWS_REGION}"
+        }
+      }
     }
   ]
 }

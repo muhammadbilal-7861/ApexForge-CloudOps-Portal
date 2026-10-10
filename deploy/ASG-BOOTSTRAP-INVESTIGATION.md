@@ -1,15 +1,17 @@
+> Historical engineering notes: resource identifiers below have been replaced with synthetic examples. They are not current deployment instructions or verified live resources. Use [the reusable configuration guide](../docs/CONFIGURATION.md) and reviewed private inventory.
+
 # Prior ASG failure: read-only review, 2026-10-04
 
 ## Verified observations
 
 - `DescribeScalingActivities` reports repeated launch failures because the regional vCPU limit is **8**. Requesting a second ASG instance while the existing three 2-vCPU nodes remain active exceeds that budget.
-- Instances `i-0f9b4d18ecd78cccc` and `i-0bdbb213d02e44592` launched at approximately 15:45 UTC using reviewed Ubuntu AMI `ami-0769f265f707fecc8`. ASG activity records explicitly report ELB health failures before their replacement/termination.
-- The later instance `i-0e3a7856d006d171c` launched at 16:08 UTC. The ASG was subsequently drained by an existing operator action; its termination completed at 16:21 UTC. This review made no capacity changes.
+- Instances `i-0000000000000000d` and `i-0000000000000000b` launched at approximately 15:45 UTC using reviewed Ubuntu AMI `ami-00000000000000001`. ASG activity records explicitly report ELB health failures before their replacement/termination.
+- The later instance `i-0000000000000000c` launched at 16:08 UTC. The ASG was subsequently drained by an existing operator action; its termination completed at 16:21 UTC. This review made no capacity changes.
 - Retained EC2 console output for all three reports a failed cloud-init `scripts_user` module. Cloud-init finished after roughly 44–47 seconds. Bootstrap redirected its output into a private local file, so no specific failing command or bootstrap exit line is available in the retained console.
 - Existing SSM command-invocation history for these three terminated instances is empty; no new SSM command was issued to investigate them.
 - `/cloudops/app` has no log streams. The previous bootstrap configured/started CloudWatch after package installation, CLI/agent installation, Snap/SSM setup and runtime-secret validation. Failure before that point leaves no CloudWatch bootstrap evidence.
 - Read-only launch-template v7 validation found rendered Bash user data, no carriage returns and valid Bash syntax. Raw user data was inspected privately and is not included in this document or reports.
-- At inspection, ASG capacity was **0/0/0**, selected template version **7**, with no instances. The separate canary `i-02777a62f2a65bc1e` remained the sole healthy target.
+- At inspection, ASG capacity was **0/0/0**, selected template version **7**, with no instances. The separate canary `i-00000000000000001` remained the sole healthy target.
 
 ## Conclusions and limits
 

@@ -10,7 +10,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from cloudops_ami import REVIEW, validate_ami, validate_source
+from cloudops_ami import REVIEW, CONFIG, ENV, validate_ami, validate_source
 from cloudops_launch import validate_settings
 
 
@@ -36,7 +36,7 @@ def preview(source: dict, ami: dict, parameter: dict, overrides: dict) -> dict:
                      "/var/lib/cloudops/bootstrap-complete.json", "sha256sum --check --status", "set +x"):
         if required not in script:
             raise ValueError("bootstrap safety control is missing")
-    if not re.search(r'IMAGE_URI="489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}"', script):
+    if not re.search(r'IMAGE_URI="' + re.escape(ENV["ECR_URI"]) + r'@sha256:[0-9a-f]{64}"', script):
         raise ValueError("bootstrap does not pin an approved ECR digest")
     validate_settings(overrides)
     metadata = overrides.get("MetadataOptions", {})
@@ -46,7 +46,7 @@ def preview(source: dict, ami: dict, parameter: dict, overrides: dict) -> dict:
     if any(item.get("SubnetId") or item.get("AssociatePublicIpAddress") is not False for item in interfaces):
         raise ValueError("rendered network interface must be private and must not pin a subnet")
     return {
-        "launchTemplateId": "lt-028eb222c6fcfffc1", "sourceVersion": 5,
+        "launchTemplateId": CONFIG["LAUNCH_TEMPLATE_ID"], "sourceVersion": 5,
         "sourceVersionInherited": False, "instanceType": overrides["InstanceType"],
         "availabilityZoneIndependent": True,
         "sourceImageRejected": REVIEW["rejected_image_id"], "newImageId": image["ImageId"],

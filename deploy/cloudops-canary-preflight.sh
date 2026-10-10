@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 set +x
+: "${AWS_REGION:?}" "${AWS_ACCOUNT_ID:?}" "${ECR_URI:?}" "${ECR_REGISTRY:?}" "${TARGET_GROUP_ARN:?}" "${DB_SECRET_NAME:?}" "${SESSION_SECRET_NAME:?}" "${LOG_GROUP_NAME:?}" "${SESSION_COOKIE_SECURE:?}"
+set +x
 
-readonly AWS_REGION=eu-north-1
 readonly RUNTIME_ENV="${CLOUDOPS_RUNTIME_ENV:-/etc/cloudops/runtime.env}"
-readonly ECR_REPOSITORY=apexforge-cloudops-portal
-readonly LOG_GROUP=/cloudops/app
+readonly ECR_REPOSITORY="${ECR_REPOSITORY:?}"
+readonly LOG_GROUP="$LOG_GROUP_NAME"
 
-if (($# != 2)) || [[ ! "$1" =~ ^489502663059\.dkr\.ecr\.eu-north-1\.amazonaws\.com/apexforge-cloudops-portal@sha256:[0-9a-f]{64}$ ]]; then
+if (($# != 2)) || [[ ! "$1" =~ ^"${ECR_URI}"@sha256:[0-9a-f]{64}$ ]]; then
     printf 'Usage: %s immutable-ECR-image-reference target-group-arn\n' "$0" >&2
     exit 2
 fi
 image_ref="$1"
 image_digest="${image_ref##*@}"
 target_group_arn="$2"
-[[ "$target_group_arn" == arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/* ]] || { printf 'Unexpected target group.\n' >&2; exit 2; }
+[[ "$target_group_arn" == "$TARGET_GROUP_ARN" ]] || { printf 'Unexpected target group.\n' >&2; exit 2; }
 # This runs via SSM on the application node, with its instance role, before approval.
 # A denied API is not an unhealthy target: fail on the first unsuccessful request.
 aws elbv2 describe-target-health --region "$AWS_REGION" --target-group-arn "$target_group_arn" --output json >/dev/null || {
@@ -29,6 +30,7 @@ done
 [[ "$(stat -c '%U:%G:%a' "$RUNTIME_ENV")" == root:root:600 ]] || { printf 'runtime.env must be owned root:root with mode 0600.\n' >&2; exit 1; }
 
 python3 - "$RUNTIME_ENV" <<'PY'
+import os
 import sys
 
 allowed = {
@@ -46,8 +48,8 @@ with open(sys.argv[1], encoding="utf-8") as source:
             raise SystemExit("runtime.env contains invalid, duplicate, or unapproved settings")
         values[key] = value
 expected = {
-    "FLASK_ENV": "production", "SESSION_COOKIE_SECURE": "false", "USE_AWS_SECRETS": "true",
-    "AWS_SECRET_NAME": "cloudops/prod/mariadb", "AWS_REGION": "eu-north-1",
+    "FLASK_ENV": "production", "SESSION_COOKIE_SECURE": os.environ["SESSION_COOKIE_SECURE"], "USE_AWS_SECRETS": "true",
+    "AWS_SECRET_NAME": os.environ["DB_SECRET_NAME"], "AWS_REGION": os.environ["AWS_REGION"],
     "ENABLE_LAB_FAILURE_ENDPOINTS": "false",
 }
 if any(values.get(key) != value for key, value in expected.items()):
@@ -58,13 +60,13 @@ print("Approved runtime environment validated.")
 PY
 
 # Compare without displaying or persisting either copy of the stable signing secret.
-aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id cloudops/prod/flask-session-key --query SecretString --output text |
+aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$SESSION_SECRET_NAME" --query SecretString --output text |
     python3 -c 'import sys; p=sys.argv[1]; key=next((line.rstrip("\n").partition("=")[2] for line in open(p,encoding="utf-8") if line.startswith("SECRET_KEY=")),""); value=sys.stdin.read(); value=value[:-1] if value.endswith("\n") else value; valid=bool(value) and "\n" not in value and "\r" not in value and len(value)>=32 and value==key; print("Stable Flask signing secret validated.") if valid else sys.exit(1)' "$RUNTIME_ENV" || {
         printf 'runtime.env signing key does not match the stable Secrets Manager value.\n' >&2
         exit 1
     }
 
-aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id cloudops/prod/mariadb --query SecretString --output text |
+aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$DB_SECRET_NAME" --query SecretString --output text |
     python3 -c 'import json,sys; d=json.load(sys.stdin); ok=all(isinstance(d.get(k),str) and d[k] for k in ("host","username","password")) and isinstance(d.get("dbname",d.get("database")),str) and bool(d.get("dbname",d.get("database"))); port=int(d.get("port",3306)); sys.exit(0 if ok and 0<port<65536 else 1)' || {
         printf 'Database secret is inaccessible or has an invalid schema.\n' >&2
         exit 1
@@ -92,6 +94,7 @@ parse_ecr_manifest() {
 import hashlib
 import json
 import re
+import os
 import sys
 
 mode, requested_digest, response_path = sys.argv[1:]

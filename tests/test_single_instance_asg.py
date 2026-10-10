@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -25,7 +26,7 @@ def test_preview_identifies_one_initial_instance_and_retained_canary():
                              read_fixture("aws-reviewed-ubuntu24-parameter.json"), reviewed_overrides())
     assert result["initialCapacity"] == {"min": 1, "desired": 1, "max": 1}
     assert result["canaryRetired"] is False
-    assert result["newImageId"] == "ami-0769f265f707fecc8"
+    assert result["newImageId"] == "ami-00000000000000001"
     assert result["availabilityZoneIndependent"] is True
     assert result["userDataValidation"]["bytes"] <= 16384
     assert result["userDataValidation"]["immutableImage"] is True
@@ -114,7 +115,7 @@ def test_early_failure_without_cli_remains_visible_and_cannot_serve(bootstrap_ho
 
 
 def test_bootstrap_diagnostics_need_no_expanded_iam_or_canary_retirement():
-    policy = json.loads((ROOT / "deploy/iam/cloudops-ec2-instance-policy.json").read_text())
+    policy = load_helper("render-iam-policy").render(json.loads((ROOT / "deploy/iam/cloudops-ec2-instance-policy.json").read_text()), json.loads(Path(os.environ["CLOUDOPS_CONFIG_FILE"]).read_text()))
     statement = next(item for item in policy["Statement"] if item["Sid"] == "WriteToPrecreatedCloudOpsLogGroup")
     assert set(statement["Action"]) == {"logs:CreateLogStream", "logs:PutLogEvents"}
     assert statement["Resource"].endswith("log-group:/cloudops/app:log-stream:*")

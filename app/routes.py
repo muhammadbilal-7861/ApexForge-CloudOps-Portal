@@ -78,7 +78,7 @@ def file_upload():
         file=request.files.get("file")
         if not file or not file.filename: flash("Choose a file to upload.", "danger")
         else:
-            try: key=upload_file(file, current_user.id); metrics.s3_upload.inc(); current_app.logger.info("S3 upload succeeded user_id=%s object_key=%s", current_user.id, key); flash("Upload completed.", "success")
+            try: key=upload_file(file, current_user.id); metrics.s3_upload.inc(); current_app.logger.info("S3 upload succeeded user_id=%s", current_user.id); flash("Upload completed.", "success")
             except (ValueError, RuntimeError) as e: metrics.s3_upload_failures.inc(); flash(str(e), "danger")
             except Exception: metrics.s3_upload_failures.inc(); current_app.logger.exception("S3 upload failed user_id=%s", current_user.id); flash("S3 upload failed. Check application logs and IAM permissions.", "danger")
     return render_template("upload.html", object_key=key)

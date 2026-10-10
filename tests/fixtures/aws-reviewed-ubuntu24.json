@@ -7,7 +7,7 @@
                 {
                     "Ebs": {
                         "DeleteOnTermination": true,
-                        "SnapshotId": "snap-018e23b01d6c25622",
+                        "SnapshotId": "snap-00000000000000001",
                         "VolumeSize": 8,
                         "VolumeType": "gp3",
                         "Encrypted": false
@@ -37,7 +37,7 @@
             "ImdsSupport": "v2.0",
             "FreeTierEligible": true,
             "PublicSsmParameterName": "aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id",
-            "ImageId": "ami-0769f265f707fecc8",
+            "ImageId": "ami-00000000000000001",
             "ImageLocation": "amazon/ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260923",
             "State": "available",
             "OwnerId": "099720109477",

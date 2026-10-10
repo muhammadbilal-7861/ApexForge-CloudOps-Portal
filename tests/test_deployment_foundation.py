@@ -81,8 +81,8 @@ class FakeEcrPublisher:
         elif command[:2] == ["docker", "run"]:
             aws_args = command[command.index("public.ecr.aws/aws-cli/aws-cli:2.37.5") + 1:]
             if aws_args[:2] == ["sts", "get-caller-identity"]:
-                stdout = ("arn:aws:sts::489502663059:assumed-role/DevSecOpsToolsRole/jenkins\n"
-                          if "Arn" in aws_args else "489502663059\n")
+                stdout = ("arn:aws:sts::123456789012:assumed-role/ExampleToolsRole/jenkins\n"
+                          if "Arn" in aws_args else "123456789012\n")
             elif aws_args[:2] == ["ecr", "describe-repositories"]:
                 stdout = "IMMUTABLE\n"
             elif aws_args[:2] == ["ecr", "get-login-password"]:
@@ -113,13 +113,13 @@ class FakeEcrPublisher:
 @pytest.fixture
 def ecr_publisher_config() -> dict[str, str]:
     return {
-        "AWS_REGION": "eu-north-1",
-        "AWS_ACCOUNT_ID": "489502663059",
-        "AWS_EXPECTED_ROLE": "DevSecOpsToolsRole",
+        "AWS_REGION": "us-east-1",
+        "AWS_ACCOUNT_ID": "123456789012",
+        "AWS_EXPECTED_ROLE": "ExampleToolsRole",
         "AWS_CLI_IMAGE": "public.ecr.aws/aws-cli/aws-cli:2.37.5",
-        "ECR_REGISTRY": "489502663059.dkr.ecr.eu-north-1.amazonaws.com",
+        "ECR_REGISTRY": "123456789012.dkr.ecr.us-east-1.amazonaws.com",
         "ECR_REPOSITORY": "apexforge-cloudops-portal",
-        "ECR_URI": "489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal",
+        "ECR_URI": "123456789012.dkr.ecr.us-east-1.amazonaws.com/apexforge-cloudops-portal",
         "APP_IMAGE_REF": "apexforge-cloudops:build-123",
         "GIT_COMMIT_SHORT": "0123456789ab",
     }
@@ -190,8 +190,8 @@ def test_launch_template_allowlist_discards_unreviewed_source_tags() -> None:
     source = {
         "VersionNumber": 5,
         "LaunchTemplateData": {
-            "InstanceType": "t3.micro", "IamInstanceProfile": {"Arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"},
-            "NetworkInterfaces": [{"DeviceIndex": 0, "Groups": ["sg-0f9613afd389c288d"], "SubnetId": "subnet-08469c4e69b5c4d65"}],
+            "InstanceType": "t3.micro", "IamInstanceProfile": {"Arn": "arn:aws:iam::123456789012:instance-profile/ExampleAppRole"},
+            "NetworkInterfaces": [{"DeviceIndex": 0, "Groups": ["sg-00000000000000001"], "SubnetId": "subnet-00000000000000001"}],
             "TagSpecifications": [
                 {"ResourceType": "instance", "Tags": [{"Key": "Owner", "Value": "cloudops"}]},
                 {"ResourceType": "volume", "Tags": [{"Key": "Data", "Value": "keep"}]},
@@ -215,14 +215,14 @@ def test_ssm_renderer_quotes_command_arguments_and_checks_immutable_digest() -> 
     digest = "sha256:" + "b" * 64
     args = argparse.Namespace(
         mode="deploy",
-        image=f"489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal@{digest}",
+        image=f"123456789012.dkr.ecr.us-east-1.amazonaws.com/apexforge-cloudops-portal@{digest}",
         version="c" * 12,
         commit="c" * 40,
         deploy_sha256="d" * 64,
         verify_sha256="e" * 64,
         preflight_sha256="f" * 64,
-        instance_ids=["i-02777a62f2a65bc1e"],
-        target_group_arn="arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/test/abc'$(touch /tmp/nope)",
+        instance_ids=["i-00000000000000001"],
+        target_group_arn="arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc'$(touch /tmp/nope)",
         require_target_healthy=False,
     )
     payload = helper.render(args)
@@ -233,7 +233,7 @@ def test_ssm_renderer_quotes_command_arguments_and_checks_immutable_digest() -> 
     import shlex
 
     assert shlex.split(commands[-1])[-1] == args.target_group_arn
-    args.image = "489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal:latest"
+    args.image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/apexforge-cloudops-portal:latest"
     try:
         helper.render(args)
     except ValueError:
@@ -247,14 +247,14 @@ def test_ssm_canary_preflight_renderer_is_checksum_pinned_and_secret_safe() -> N
     digest = "sha256:" + "b" * 64
     args = argparse.Namespace(
         mode="preflight",
-        image=f"489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal@{digest}",
+        image=f"123456789012.dkr.ecr.us-east-1.amazonaws.com/apexforge-cloudops-portal@{digest}",
         version="c" * 12,
         commit="c" * 40,
         deploy_sha256="d" * 64,
         verify_sha256="e" * 64,
         preflight_sha256="f" * 64,
-        instance_ids=["i-02777a62f2a65bc1e"],
-        target_group_arn="arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/example",
+        instance_ids=["i-00000000000000001"],
+        target_group_arn="arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-cloudops-app/0000000000000001",
         require_target_healthy=False,
     )
     commands = helper.render(args)["Parameters"]["commands"]
@@ -335,28 +335,28 @@ def test_preflight_rejects_public_application_port_sources() -> None:
 
 def write_asg_preflight_snapshots(tmp_path: Path):
     helper = load_helper("cloudops-aws-preflight")
-    alb_arn = "arn:aws:elasticloadbalancing:eu-north-1:489502663059:loadbalancer/app/alb-load/abc"
-    target_arn = "arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/def"
+    alb_arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/alb-load/abc"
+    target_arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-cloudops-app/0000000000000001"
     snapshots = {
-        "alb.json": {"LoadBalancers": [{"LoadBalancerName": "alb-load", "VpcId": "vpc-080d46671dbdcacab", "LoadBalancerArn": alb_arn, "SecurityGroups": ["sg-alb"]}]},
-        "target-group.json": {"TargetGroups": [{"TargetGroupName": "tg-cloudops-app", "TargetGroupArn": target_arn, "Port": 5000, "HealthCheckPath": "/ready", "VpcId": "vpc-080d46671dbdcacab", "LoadBalancerArns": [alb_arn]}]},
+        "alb.json": {"LoadBalancers": [{"LoadBalancerName": "alb-load", "VpcId": "vpc-00000000000000001", "LoadBalancerArn": alb_arn, "SecurityGroups": ["sg-alb"]}]},
+        "target-group.json": {"TargetGroups": [{"TargetGroupName": "tg-cloudops-app", "TargetGroupArn": target_arn, "Port": 5000, "HealthCheckPath": "/ready", "VpcId": "vpc-00000000000000001", "LoadBalancerArns": [alb_arn]}]},
         "listeners.json": {"Listeners": [{"DefaultActions": [{"TargetGroupArn": target_arn}]}]},
-        "observability-instance.json": {"Reservations": [{"Instances": [{"InstanceId": "i-0c550edbaa5ecbdff", "SecurityGroups": [{"GroupId": "sg-obs"}]}]}]},
+        "observability-instance.json": {"Reservations": [{"Instances": [{"InstanceId": "i-00000000000000002", "SecurityGroups": [{"GroupId": "sg-obs"}]}]}]},
         "rds.json": {"DBInstances": [{"DBInstanceStatus": "available"}]},
         "logs.json": {"logGroups": [{"logGroupName": "/cloudops/app"}]},
         "asg.json": {"AutoScalingGroups": [{
             "AutoScalingGroupName": "asg-cloudops-app",
-            "VPCZoneIdentifier": "subnet-08469c4e69b5c4d65,subnet-05788ba98ca1096e6",
+            "VPCZoneIdentifier": "subnet-00000000000000001,subnet-00000000000000002",
             "TargetGroupARNs": [target_arn],
-            "LaunchTemplate": {"LaunchTemplateId": "lt-028eb222c6fcfffc1", "Version": "5"},
+            "LaunchTemplate": {"LaunchTemplateId": "lt-00000000000000001", "Version": "5"},
             "MinSize": 0, "DesiredCapacity": 0, "MaxSize": 0,
             "HealthCheckType": "ELB",
         }]},
         "launch-template.json": {"VersionNumber": 5, "LaunchTemplateData": {
-            "ImageId": "ami-09b67ca726bea7328", "InstanceType": "t3.micro",
-            "IamInstanceProfile": {"Arn": "arn:aws:iam::489502663059:instance-profile/CloudOpsEC2Role"}, "SecurityGroupIds": ["sg-0f9613afd389c288d"],
+            "ImageId": "ami-00000000000000002", "InstanceType": "t3.micro",
+            "IamInstanceProfile": {"Arn": "arn:aws:iam::123456789012:instance-profile/ExampleAppRole"}, "SecurityGroupIds": ["sg-00000000000000001"],
         }},
-        "security-groups.json": {"SecurityGroups": [{"GroupId": "sg-0f9613afd389c288d", "IpPermissions": [{
+        "security-groups.json": {"SecurityGroups": [{"GroupId": "sg-00000000000000001", "IpPermissions": [{
             "IpProtocol": "tcp", "FromPort": 5000, "ToPort": 5000,
             "UserIdGroupPairs": [{"GroupId": "sg-alb"}, {"GroupId": "sg-obs"}],
         }]}]},
@@ -375,7 +375,7 @@ def test_asg_preflight_uses_elb_target_group_arn_key(tmp_path: Path) -> None:
 
     found_arn, security_groups = helper.validate_common(tmp_path, "asg")
     assert found_arn == target_arn
-    assert security_groups == ["sg-0f9613afd389c288d"]
+    assert security_groups == ["sg-00000000000000001"]
 
 
 @pytest.fixture
@@ -448,7 +448,7 @@ elif a[0]=="port":
 elif a[0]=="pull": sys.exit(1) if os.getenv("TEST_ECR_PULL_FAIL")=="true" else None
 elif a[0]=="login": sys.stdin.read()
 elif a[0]=="run":
-    name=a[a.index("--name")+1]; image=next(x for x in a if x.startswith("489502663059.dkr.ecr.") and "@sha256:" in x)
+    name=a[a.index("--name")+1]; image=next(x for x in a if x.startswith("123456789012.dkr.ecr.") and "@sha256:" in x)
     if get(name): sys.exit(125)
     labels={}
     for i,x in enumerate(a[:-1]):
@@ -534,7 +534,7 @@ sys.stdout.write(status)
     runtime_env = tmp_path / "runtime.env"
     runtime_env.write_text(
         "FLASK_ENV=production\nSECRET_KEY=" + secret + "\nSESSION_COOKIE_SECURE=false\n"
-        "USE_AWS_SECRETS=true\nAWS_SECRET_NAME=cloudops/prod/mariadb\nAWS_REGION=eu-north-1\n"
+        "USE_AWS_SECRETS=true\nAWS_SECRET_NAME=cloudops/prod/mariadb\nAWS_REGION=us-east-1\n"
         "ENABLE_LAB_FAILURE_ENDPOINTS=false\n",
         encoding="utf-8",
     )
@@ -543,7 +543,7 @@ sys.stdout.write(status)
     shutil.copyfile(ROOT / "deploy/cloudops-verify.sh", verify)
     verify.chmod(0o755)
 
-    image = "489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal@sha256:" + "a" * 64
+    image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/apexforge-cloudops-portal@sha256:" + "a" * 64
     env = os.environ.copy()
     env.update({
         "PATH": f"{bin_dir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -564,8 +564,8 @@ sys.stdout.write(status)
 def run_fake_deploy(host: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(ROOT / "deploy/cloudops-deploy.sh"), host["image"], host["version"],
-         "--target-group-arn", "arn:aws:elasticloadbalancing:eu-north-1:489502663059:targetgroup/tg-cloudops-app/abc",
-         "--instance-id", "i-02777a62f2a65bc1e"],
+         "--target-group-arn", "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg-cloudops-app/0000000000000001",
+         "--instance-id", "i-00000000000000001"],
         env=host["env"], capture_output=True, text=True, timeout=30,
     )
 
@@ -930,7 +930,7 @@ def test_unexpected_inspected_publications_rejected(fake_canary_host, source, po
 def test_successful_cutover_from_managed_previous_container(fake_canary_host: dict[str, str]) -> None:
     state_path = Path(fake_canary_host["state"])
     state = json.loads(state_path.read_text())
-    old_image = "489502663059.dkr.ecr.eu-north-1.amazonaws.com/apexforge-cloudops-portal@sha256:" + "9" * 64
+    old_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/apexforge-cloudops-portal@sha256:" + "9" * 64
     state["containers"] = {"managed-1": {
         "id": hashlib.sha256(b"managed-1").hexdigest(), "name": "cloudops-app", "image": old_image, "running": True,
         "network": "host", "labels": {"service": "cloudops", "org.apexforge.version": "9" * 12},

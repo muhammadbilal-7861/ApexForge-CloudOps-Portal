@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import subprocess
 import os
+from tests.test_deployment_foundation import load_helper
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,10 +34,10 @@ def test_image_inputs_are_pinned_and_no_package_upgrade_occurs() -> None:
 
 
 def test_app_role_target_health_permission_is_region_restricted() -> None:
-    policy = json.loads((ROOT / "deploy/iam/cloudops-ec2-instance-policy.json").read_text())
+    policy = load_helper("render-iam-policy").render(json.loads((ROOT / "deploy/iam/cloudops-ec2-instance-policy.json").read_text()), json.loads(Path(os.environ["CLOUDOPS_CONFIG_FILE"]).read_text()))
     statement = next(item for item in policy["Statement"] if item["Action"] == "elasticloadbalancing:DescribeTargetHealth")
     assert statement["Resource"] == "*"
-    assert statement["Condition"]["StringEquals"]["aws:RequestedRegion"] == "eu-north-1"
+    assert statement["Condition"]["StringEquals"]["aws:RequestedRegion"] == "us-east-1"
 
 
 def test_build_command_uses_commit_time_and_archived_context(tmp_path) -> None:

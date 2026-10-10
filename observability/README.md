@@ -1,17 +1,19 @@
+> Historical engineering notes: resource identifiers below have been replaced with synthetic examples. They are not current deployment instructions or verified live resources. Use [the reusable configuration guide](../docs/CONFIGURATION.md) and reviewed private inventory.
+
 # Existing CloudOps observability server
 
 ## FIRST: discovery and reconciliation
 
-Reuse EC2 **i-0c550edbaa5ecbdff** (previously stopped, t3.small). Its last observed private IP **10.0.11.62** is UNVERIFIED. Installed images, Compose paths and volumes remain unknown until inventory. Do not create a parallel stack or delete monitoring data. No tools host or separate RDS project changes are required.
+Reuse EC2 **i-00000000000000002** (previously stopped, t3.small). Its last observed private IP **192.0.2.10** is UNVERIFIED. Installed images, Compose paths and volumes remain unknown until inventory. Do not create a parallel stack or delete monitoring data. No tools host or separate RDS project changes are required.
 
 From an authorized operator workstation with AWS CLI and Session Manager plugin:
 
 ```bash
-aws ec2 describe-instances --region eu-north-1 --instance-ids i-0c550edbaa5ecbdff --query 'Reservations[].Instances[].{State:State.Name,IP:PrivateIpAddress,VPC:VpcId,Role:IamInstanceProfile.Arn,Metadata:MetadataOptions}'
-aws ec2 start-instances --region eu-north-1 --instance-ids i-0c550edbaa5ecbdff
-aws ec2 wait instance-running --region eu-north-1 --instance-ids i-0c550edbaa5ecbdff
-aws ssm describe-instance-information --region eu-north-1 --filters Key=InstanceIds,Values=i-0c550edbaa5ecbdff
-aws ssm start-session --region eu-north-1 --target i-0c550edbaa5ecbdff
+aws ec2 describe-instances --region us-east-1 --instance-ids i-00000000000000002 --query 'Reservations[].Instances[].{State:State.Name,IP:PrivateIpAddress,VPC:VpcId,Role:IamInstanceProfile.Arn,Metadata:MetadataOptions}'
+aws ec2 start-instances --region us-east-1 --instance-ids i-00000000000000002
+aws ec2 wait instance-running --region us-east-1 --instance-ids i-00000000000000002
+aws ssm describe-instance-information --region us-east-1 --filters Key=InstanceIds,Values=i-00000000000000002
+aws ssm start-session --region us-east-1 --target i-00000000000000002
 # In SSM shell, from a private checkout:
 sudo bash observability/scripts/inventory.sh
 ```
@@ -23,15 +25,15 @@ Inventory lists Docker containers, Compose projects/config paths, image IDs, mou
 Run each tunnel in a separate workstation terminal:
 
 ```bash
-aws ssm start-session --region eu-north-1 --target i-0c550edbaa5ecbdff --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["3000"],"localPortNumber":["3000"]}'
-aws ssm start-session --region eu-north-1 --target i-0c550edbaa5ecbdff --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["9090"],"localPortNumber":["9090"]}'
+aws ssm start-session --region us-east-1 --target i-00000000000000002 --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["3000"],"localPortNumber":["3000"]}'
+aws ssm start-session --region us-east-1 --target i-00000000000000002 --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["9090"],"localPortNumber":["9090"]}'
 ```
 
 Open `http://localhost:3000` (existing Grafana login) and `http://localhost:9090`. Use local 13000/19090 if occupied. PowerShell can use CLI shorthand `--parameters 'portNumber=3000,localPortNumber=3000'` (9090 analogously). Bind UIs to host loopback; no SG ingress on 3000/9090/9093/9115. Loki has private ingress only. SSM requires existing host agent/role, operator authorization and private endpoints or approved HTTPS egress. See [AWS session examples](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-sessions-start.html).
 
 ## EC2 discovery and IMDSv2
 
-`prometheus/prometheus.example.yml` is a MERGE example. It discovers running instances in eu-north-1/VPC vpc-080d46671dbdcacab with BOTH tags Role=app and Monitoring=enabled. This includes i-02777a62f2a65bc1e and future asg-cloudops-app nodes once tagged. Private addresses scrape `/metrics`:5000. Optional node_exporter discovery additionally requires NodeExporter=enabled; apply that tag only after installing a reviewed pinned exporter on private port 9100. Python process metrics are not host metrics.
+`prometheus/prometheus.example.yml` is a MERGE example. It discovers running instances in us-east-1/VPC vpc-00000000000000001 with BOTH tags Role=app and Monitoring=enabled. This includes i-00000000000000001 and future asg-cloudops-app nodes once tagged. Private addresses scrape `/metrics`:5000. Optional node_exporter discovery additionally requires NodeExporter=enabled; apply that tag only after installing a reviewed pinned exporter on private port 9100. Python process metrics are not host metrics.
 
 `iam/prometheus-role-policy.json` grants only ec2:DescribeInstances (Resource `*` is required). Attach to monitoring instance profile, retaining separately required SSM permissions. Use temporary role credentials, never static keys. Check metadata options with the operator DescribeInstances command. Require IMDSv2. Test from host and Prometheus execution network without printing credentials:
 
@@ -62,9 +64,9 @@ Use `alloy/app-logging.example.yml` during the deployment owner's reviewed app r
 Install a reviewed pinned Alloy Linux binary at `/usr/local/bin/alloy`, verify upstream checksum/signature and record version/digest. Linux systemd, journald/systemd-journal group, curl and Docker are required. Confirm monitoring IP on every app boot/rollout via operator DescribeInstances; pass it through launch configuration or maintained private DNS. No extra app-role discovery permission is needed with operator-fed configuration. The ASG deployment hook must receive that confirmed endpoint and run bootstrap after starting the exact CloudOps container:
 
 ```bash
-aws ec2 describe-instances --region eu-north-1 --instance-ids i-0c550edbaa5ecbdff --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text
+aws ec2 describe-instances --region us-east-1 --instance-ids i-00000000000000002 --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text
 # App SSM shell: use confirmed IP, actual container and environment:
-sudo env CLOUDOPS_CONTAINER=cloudops-app CLOUDOPS_ENVIRONMENT=production LOKI_PRIVATE_IP=10.0.11.62 bash observability/alloy/bootstrap.sh
+sudo env CLOUDOPS_CONTAINER=cloudops-app CLOUDOPS_ENVIRONMENT=production LOKI_PRIVATE_IP=192.0.2.10 bash observability/alloy/bootstrap.sh
 systemctl status cloudops-alloy
 ```
 

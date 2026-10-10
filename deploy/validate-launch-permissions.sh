@@ -2,6 +2,8 @@
 # Every launch API invocation is hard-coded DryRun. Never launch an instance.
 set -Eeuo pipefail
 set +x
+# Validated non-secret inventory is required even for read-only AWS operations.
+source "${WORKSPACE:?}/deploy/load-config.sh"
 umask 077
 : "${WORKSPACE:?}" "${AWS_CLI_IMAGE:?}" "${PYTHON_IMAGE:?}" "${AWS_REGION:?}"
 version="${1:?An explicit validated candidate version is required}"
@@ -26,13 +28,14 @@ require_dry_run() {
     fi
 }
 docker run --rm --volumes-from jenkins --user "$(id -u):$(id -g)" --workdir "$WORKSPACE" \
-    "$PYTHON_IMAGE" python deploy/render-launch-permission-check.py \
+    --env CLOUDOPS_CONFIG_FILE "$PYTHON_IMAGE" python deploy/render-launch-permission-check.py \
     --overrides "$work_dir/launch-template-overrides.json" --version "$version" \
     --asg-data "$work_dir/asg.json" --output-dir "$work_dir"
-for subnet in subnet-08469c4e69b5c4d65 subnet-05788ba98ca1096e6; do
+read -r -a approved_subnets <<< "$PRIVATE_SUBNET_IDS"
+for subnet in "${approved_subnets[@]}"; do
     require_dry_run ec2 run-instances --dry-run --cli-input-json "file://$work_dir/launch-permission-$subnet.json"
     printf 'DryRun permission validation passed: template=%s subnet=%s; no instance launched.\n' "$version" "$subnet"
 done
 mkdir -p "$WORKSPACE/reports"
-printf '{"dryRun":true,"templateVersion":"%s","subnets":["subnet-08469c4e69b5c4d65","subnet-05788ba98ca1096e6"],"result":"passed"}\n' \
-    "$version" > "$WORKSPACE/reports/asg-launch-permissions.json"
+printf '{"dryRun":true,"templateVersion":"%s","subnets":["%s","%s"],"result":"passed"}\n' \
+    "$version" "${approved_subnets[0]}" "${approved_subnets[1]}" > "$WORKSPACE/reports/asg-launch-permissions.json"

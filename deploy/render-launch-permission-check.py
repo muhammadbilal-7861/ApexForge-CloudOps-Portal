@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from cloudops_ami import REVIEW
+from cloudops_ami import REVIEW, CONFIG
 from cloudops_launch import validate_settings
 
 
@@ -21,7 +21,7 @@ def render(overrides: dict, version: str, subnet: str, propagated_tags: dict | N
     # user data: such overrides could hide defects in the approved AWS version.
     request = {
         "DryRun": True, "MinCount": 1, "MaxCount": 1,
-        "LaunchTemplate": {"LaunchTemplateId": "lt-028eb222c6fcfffc1", "Version": version},
+        "LaunchTemplate": {"LaunchTemplateId": CONFIG["LAUNCH_TEMPLATE_ID"], "Version": version},
         "NetworkInterfaces": [dict(interfaces[0], SubnetId=subnet)],
     }
     tags = REVIEW["asg_propagated_tags"] if propagated_tags is None else propagated_tags
@@ -48,7 +48,7 @@ def main() -> None:
     try:
         overrides = json.loads(args.overrides.read_text())
         groups = json.loads(args.asg_data.read_text()).get("AutoScalingGroups", [])
-        if len(groups) != 1 or groups[0].get("AutoScalingGroupName") != "asg-cloudops-app":
+        if len(groups) != 1 or groups[0].get("AutoScalingGroupName") != CONFIG["ASG_NAME"]:
             raise ValueError("permission check requires the reviewed ASG snapshot")
         if set(groups[0].get("VPCZoneIdentifier", "").split(",")) != set(REVIEW["private_subnets"]):
             raise ValueError("ASG subnets differ from the reviewed private subnets")

@@ -14,7 +14,8 @@ def database_config():
             value = json.loads(response["SecretString"])
             return {"host": value["host"], "port": int(value.get("port", 3306)), "name": value.get("dbname", value.get("database")), "user": value["username"], "password": value["password"]}
         except Exception:
-            log.exception("Secrets Manager database configuration unavailable; secret value omitted")
+            # Parser/validation exceptions can include the offending secret field.
+            log.warning("Secrets Manager database configuration unavailable; details withheld")
             raise RuntimeError("Unable to load database configuration from Secrets Manager") from None
     return {"host": os.getenv("DB_HOST", "127.0.0.1"), "port": int(os.getenv("DB_PORT", "3306")), "name": os.getenv("DB_NAME", "cloudops"), "user": os.getenv("DB_USER", "cloudops"), "password": os.getenv("DB_PASSWORD", "cloudops-local")}
 

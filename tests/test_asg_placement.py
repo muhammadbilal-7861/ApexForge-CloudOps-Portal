@@ -16,14 +16,14 @@ from tests.test_ubuntu_asg import reviewed_overrides
 
 
 def candidate(settings=None):
-    return {"LaunchTemplateId": "lt-028eb222c6fcfffc1", "VersionNumber": 6,
+    return {"LaunchTemplateId": "lt-00000000000000001", "VersionNumber": 6,
             "LaunchTemplateData": reviewed_overrides() if settings is None else settings}
 
 
 def test_allowlist_does_not_inherit_v5_placement_or_unreviewed_fields():
     renderer = load_helper("render-launch-template-data")
     source = read_fixture("cloudops-launch-template-v5.json")["LaunchTemplateData"]
-    assert source["Placement"] == {"AvailabilityZoneId": "eun1-az1"}
+    assert source["Placement"] == {"AvailabilityZoneId": "use1-az1"}
     source.update(KeyName="unexpected", Monitoring={"Enabled": True},
                   MetadataOptions={"InstanceMetadataTags": "enabled"},
                   TagSpecifications=[{"ResourceType": "volume", "Tags": [{"Key": "Unknown", "Value": "tag"}]}])
@@ -38,12 +38,12 @@ def test_allowlist_does_not_inherit_v5_placement_or_unreviewed_fields():
 
 
 @pytest.mark.parametrize("field,value", [
-    ("Placement", {"AvailabilityZone": "eu-north-1a"}),
-    ("Placement", {"AvailabilityZoneId": "eun1-az1"}),
-    ("SubnetId", "subnet-08469c4e69b5c4d65"),
+    ("Placement", {"AvailabilityZone": "us-east-1a"}),
+    ("Placement", {"AvailabilityZoneId": "use1-az1"}),
+    ("SubnetId", "subnet-00000000000000001"),
     ("KeyName", "unreviewed"),
     ("InstanceType", "t3.large"),
-    ("NetworkInterfaces", [{"DeviceIndex": 0, "SubnetId": "subnet-08469c4e69b5c4d65"}]),
+    ("NetworkInterfaces", [{"DeviceIndex": 0, "SubnetId": "subnet-00000000000000001"}]),
 ])
 def test_readback_and_preview_reject_restricted_or_unreviewed_settings(field, value):
     settings = reviewed_overrides()
@@ -88,7 +88,7 @@ def test_readback_accepts_only_disabled_aws_metadata_defaults():
 
 
 @pytest.mark.parametrize("failure", ["none", "create-denied", "read-denied", "inherited-placement",
-                                     "subnet-08469c4e69b5c4d65", "subnet-05788ba98ca1096e6"])
+                                     "subnet-00000000000000001", "subnet-00000000000000002"])
 def test_preapproval_creates_reads_back_and_probes_exact_clean_candidate(tmp_path, failure):
     workspace = tmp_path / "workspace"
     shutil.copytree(ROOT / "deploy", workspace / "deploy")
@@ -99,7 +99,7 @@ def test_preapproval_creates_reads_back_and_probes_exact_clean_candidate(tmp_pat
                           ("reviewed-ami.json", "aws-reviewed-ubuntu24.json"),
                           ("reviewed-ami-parameter.json", "aws-reviewed-ubuntu24-parameter.json")):
         (work / name).write_text(json.dumps(read_fixture(fixture)))
-    review = json.loads((workspace / "deploy/reviewed-ubuntu24.json").read_text())
+    review = json.loads(Path(os.environ["CLOUDOPS_CONFIG_FILE"]).read_text())["reviewed_ami"]
     (work / "asg.json").write_text(json.dumps({"AutoScalingGroups": [{
         "AutoScalingGroupName": "asg-cloudops-app", "VPCZoneIdentifier": ",".join(review["private_subnets"]),
         "Tags": [{"Key": k, "Value": v, "PropagateAtLaunch": True} for k, v in review["asg_propagated_tags"].items()],
@@ -130,8 +130,8 @@ elif a[:2]==["ec2","describe-launch-template-versions"]:
     if failure=="read-denied": denied()
     assert a[a.index("--versions")+1]=="6"
     data=json.loads((Path(os.environ["WORKSPACE"])/".deploy-work/launch-template-overrides.json").read_text())
-    if failure=="inherited-placement": data["Placement"]={"AvailabilityZoneId":"eun1-az1"}
-    print(json.dumps({"LaunchTemplateId":"lt-028eb222c6fcfffc1","VersionNumber":6,"LaunchTemplateData":data}))
+    if failure=="inherited-placement": data["Placement"]={"AvailabilityZoneId":"use1-az1"}
+    print(json.dumps({"LaunchTemplateId":"lt-00000000000000001","VersionNumber":6,"LaunchTemplateData":data}))
 elif a[:2]==["ec2","run-instances"]:
     assert "--dry-run" in a
     request=json.loads(Path(a[a.index("--cli-input-json")+1].removeprefix("file://")).read_text())
@@ -146,7 +146,7 @@ else: raise SystemExit("Unexpected AWS mutation")
     docker.chmod(0o755)
     log = tmp_path / "calls.jsonl"
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", WORKSPACE=str(workspace),
-               AWS_CLI_IMAGE="test-aws", PYTHON_IMAGE="test-python", AWS_REGION="eu-north-1",
+               AWS_CLI_IMAGE="test-aws", PYTHON_IMAGE="test-python", AWS_REGION="us-east-1",
                ECR_DEPLOY_IMAGE=IMAGE, GIT_COMMIT_FULL=COMMIT, GIT_COMMIT_SHORT=COMMIT[:12],
                CALLS=str(log), FAILURE=failure)
     result = subprocess.run(["bash", "deploy/prepare-cloudops-asg.sh"], cwd=workspace,

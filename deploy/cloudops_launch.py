@@ -5,9 +5,9 @@ import copy
 import json
 import re
 
-from cloudops_ami import REVIEW
+from cloudops_ami import REVIEW, CONFIG
 
-LAUNCH_TEMPLATE_ID = "lt-028eb222c6fcfffc1"
+LAUNCH_TEMPLATE_ID = CONFIG["LAUNCH_TEMPLATE_ID"]
 FIELDS = {"ImageId", "InstanceType", "IamInstanceProfile", "NetworkInterfaces",
           "UserData", "TagSpecifications", "MetadataOptions"}
 

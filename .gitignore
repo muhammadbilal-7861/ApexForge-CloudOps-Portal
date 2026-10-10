@@ -28,3 +28,10 @@ __pycache__/
 .coverage
 htmlcov/
 *.log
+deploy/environment.json
+deploy/environment.*.json
+*.tfplan
+*.p12
+*.pfx
+*.bak
+*.backup
