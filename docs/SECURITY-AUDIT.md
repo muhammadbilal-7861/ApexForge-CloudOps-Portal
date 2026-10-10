@@ -64,3 +64,7 @@ Hashed passwords, login requirements, CSRF, ownership checks for deletion, SQLAl
 - Supply an independent reviewed private inventory; render/review IAM policies before applying them manually. Do not copy synthetic AMI/IDs into live use.
 - Document risk acceptance for unfixed image vulnerabilities, update reviewed pins when fixes arrive, and complete the deployment acceptance checklist.
 - Choose a license explicitly. No LICENSE file or legal terms are selected by this PR.
+
+## Single-instance illustrated-guide follow-up
+
+The 2026-10-10 follow-up reran current-tree and all-reachable-history scanners after adding original diagram binaries and learner commands. Gitleaks found zero; TruffleHog reported one documented loopback JDBC URL without credentials, privately reviewed as a non-secret example. No suppressions or history rewrite were used. See [current validation](VALIDATION.md) for full counts, fresh-clone proof and live-test limits. This supersedes no earlier baseline evidence.
