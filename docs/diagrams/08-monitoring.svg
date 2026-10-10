@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" role="img">
+<title>Monitoring and logs</title>
+<desc>Reference private observability EC2 • Low-cardinality metrics • Secret-safe logs</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475569"/></marker></defs>
+<rect width="1280" height="900" fill="#f8fafc"/>
+<text x="40" y="48" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#0f172a">Monitoring and logs</text>
+<text x="40" y="80" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" fill="#475569">Reference private observability EC2 • Low-cardinality metrics • Secret-safe logs</text>
+<g><rect x="40" y="140" width="500" height="170" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="56" y="170" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">ONE application EC2</text>
+<text x="56" y="198" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Flask /metrics • /health • /ready</text>
+<text x="56" y="222" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Docker journald → optional Alloy collector</text>
+<text x="56" y="246" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Deployment diagnostic log → CloudWatch Agent</text>
+</g>
+<g><rect x="740" y="140" width="500" height="170" rx="12" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="756" y="170" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Private observability EC2</text>
+<text x="756" y="198" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Prometheus scrapes :5000 • optional node exporter</text>
+<text x="756" y="222" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Blackbox readiness probes • Grafana dashboards</text>
+<text x="756" y="246" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Loki receives scoped Alloy log stream</text>
+</g>
+<path d="M740,220 L540,220" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="550" y="211" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">private metrics</text>
+<path d="M540,285 L740,285" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="550" y="276" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">private log ingestion</text>
+<g><rect x="40" y="430" width="500" height="150" rx="12" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="56" y="460" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">CloudWatch Logs</text>
+<text x="56" y="488" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Pre-created app log group • retention policy</text>
+<text x="56" y="512" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Controlled health/deployment diagnostics</text>
+<text x="56" y="536" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">IAM role can write only approved streams</text>
+</g>
+<path d="M280,310 L280,430" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="290" y="301" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">HTTPS 443</text>
+<g><rect x="740" y="430" width="500" height="150" rx="12" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="756" y="460" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Administrator</text>
+<text x="756" y="488" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">SSM localhost port forward → Grafana :3000</text>
+<text x="756" y="512" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Dashboards show measured service signals</text>
+<text x="756" y="536" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">CloudWatch via authorized AWS console / CLI</text>
+</g>
+<path d="M990,430 L990,310" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="1000" y="301" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">SSM UI access</text>
+<g><rect x="40" y="680" width="1200" height="140" rx="12" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="56" y="710" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Privacy and accuracy</text>
+<text x="56" y="738" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">No request bodies, passwords, connection strings, uploaded names or secret environment values in logs.</text>
+<text x="56" y="762" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Bounded endpoint labels; no arbitrary path / request ID metric labels.</text>
+<text x="56" y="786" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">A successful scrape is not proof of ALB readiness. Test alert delivery and failure recovery independently.</text>
+</g>
+<text x="40" y="862" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#64748b">Original ApexForge360 diagram • Reference examples only • No live AWS inventory verified</text>
+</svg>

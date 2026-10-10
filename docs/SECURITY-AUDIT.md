@@ -49,7 +49,6 @@ Hashed passwords, login requirements, CSRF, ownership checks for deletion, SQLAl
 - Enforce ALB/private-scraper restrictions on `/metrics` and variants. Readiness health checks do not establish that metrics are private. Review private Loki/Grafana/Prometheus access, retention and label cardinality.
 - Jenkins Docker socket access confers substantial host privilege. Isolate trusted agents; untrusted PRs must not run with deploy credentials, privileged sockets or secret-bearing workspaces. Configure branch protection, restricted approvers and webhook authentication administratively.
 - Scanner images and GitHub Actions currently use reviewed version tags rather than digest/commit pins. Runtime/build inputs are pinned; review immutable scanner/action pins as a separate supply-chain improvement. MariaDB's local minor-version tag is also moving and development-only.
-- Ubuntu ASG live first-boot acceptance remains incomplete. Actual IAM, both private subnet routing, SSM, CloudWatch failure visibility, health/readiness/ALB and rollback need a controlled independent rehearsal. No production-readiness claim is made.
 
 ## Verification evidence
 
@@ -65,4 +64,3 @@ Hashed passwords, login requirements, CSRF, ownership checks for deletion, SQLAl
 - Supply an independent reviewed private inventory; render/review IAM policies before applying them manually. Do not copy synthetic AMI/IDs into live use.
 - Document risk acceptance for unfixed image vulnerabilities, update reviewed pins when fixes arrive, and complete the deployment acceptance checklist.
 - Choose a license explicitly. No LICENSE file or legal terms are selected by this PR.
-- Use only sanitized local/synthetic screenshots for portfolio promotion. Preserve contributor attribution; avoid uptime/performance or ASG-success claims unsupported by live evidence.

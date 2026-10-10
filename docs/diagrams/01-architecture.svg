@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" role="img">
+<title>AWS architecture — one private application EC2</title>
+<desc>Reference VPC 10.0.0.0/16 • Two Availability Zones • One Single-AZ MariaDB RDS</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475569"/></marker></defs>
+<rect width="1280" height="900" fill="#f8fafc"/>
+<text x="40" y="48" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#0f172a">AWS architecture — one private application EC2</text>
+<text x="40" y="80" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" fill="#475569">Reference VPC 10.0.0.0/16 • Two Availability Zones • One Single-AZ MariaDB RDS</text>
+<g><rect x="40" y="110" width="1200" height="80" rx="12" fill="#e2e8f0" stroke="#94a3b8"/>
+<text x="56" y="140" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Public services</text>
+<text x="56" y="168" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Internet → HTTPS ALB | IAM identity / roles | ECR immutable images | Secrets Manager | Systems Manager | CloudWatch</text>
+</g>
+<g><rect x="40" y="215" width="580" height="90" rx="12" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="56" y="245" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ A — public 10.0.1.0/24</text>
+<text x="56" y="273" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">ALB node • Optional NAT A • Internet Gateway route</text>
+</g>
+<g><rect x="660" y="215" width="580" height="90" rx="12" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="676" y="245" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ B — public 10.0.2.0/24</text>
+<text x="676" y="273" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">ALB node • Optional NAT B • Internet Gateway route</text>
+</g>
+<g><rect x="40" y="360" width="580" height="140" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="56" y="390" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ A — private application 10.0.11.0/24</text>
+<text x="56" y="418" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">ONE application EC2 • Gunicorn :5000</text>
+<text x="56" y="442" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Candidate :5001 is local-only • IAM application role</text>
+<text x="56" y="466" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">SSM agent • CloudWatch / Alloy logs</text>
+</g>
+<g><rect x="660" y="360" width="580" height="140" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="676" y="390" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ B — private application 10.0.12.0/24</text>
+<text x="676" y="418" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Jenkins + SonarQube EC2 • IAM tools role</text>
+<text x="676" y="442" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Observability EC2 • Prometheus / Grafana / Loki</text>
+<text x="676" y="466" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Private SSM / AWS API endpoints or NAT egress</text>
+</g>
+<path d="M300,305 L300,360" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="310" y="296" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">ALB → app :5000</text>
+<g><rect x="40" y="565" width="580" height="110" rx="12" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="56" y="595" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ A — private database 10.0.21.0/24</text>
+<text x="56" y="623" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">ONE Single-AZ MariaDB RDS instance</text>
+<text x="56" y="647" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">No public address • DB ingress :3306 from app SG</text>
+</g>
+<g><rect x="660" y="565" width="580" height="110" rx="12" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="676" y="595" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ B — private database 10.0.22.0/24</text>
+<text x="676" y="623" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Second member of the same DB subnet group</text>
+<text x="676" y="647" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">No second database instance or standby</text>
+</g>
+<path d="M300,500 L300,565" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="310" y="491" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">app → MariaDB :3306</text>
+<g><rect x="40" y="720" width="1200" height="90" rx="12" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="56" y="750" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Administration and delivery</text>
+<text x="56" y="778" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Administrator → SSM Session Manager • Jenkins → SSM Run Command • No inbound SSH or bastion</text>
+<text x="56" y="802" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Private app pulls approved ECR digest; retrieves secrets using its EC2 role; logs to CloudWatch.</text>
+</g>
+<text x="40" y="862" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#64748b">Original ApexForge360 diagram • Reference examples only • No live AWS inventory verified</text>
+</svg>

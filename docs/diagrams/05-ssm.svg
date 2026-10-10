@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" role="img">
+<title>SSM administration and deployment paths</title>
+<desc>No SSH port 22 • No bastion • Private EC2 nodes initiate encrypted outbound connections</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475569"/></marker></defs>
+<rect width="1280" height="900" fill="#f8fafc"/>
+<text x="40" y="48" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#0f172a">SSM administration and deployment paths</text>
+<text x="40" y="80" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" fill="#475569">No SSH port 22 • No bastion • Private EC2 nodes initiate encrypted outbound connections</text>
+<g><rect x="40" y="130" width="520" height="130" rx="12" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="56" y="160" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Administrator / IAM Identity Center</text>
+<text x="56" y="188" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">MFA + short-lived session</text>
+<text x="56" y="212" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Session Manager session / localhost port forwarding</text>
+</g>
+<g><rect x="720" y="130" width="520" height="130" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="736" y="160" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Jenkins EC2 / tools instance role</text>
+<text x="736" y="188" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Restricted approval before AWS operations</text>
+<text x="736" y="212" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">SSM Run Command to ONE inventoried instance</text>
+</g>
+<path d="M300,260 L300,345" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="310" y="251" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">HTTPS 443</text>
+<path d="M980,260 L980,345" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="990" y="251" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">AWS API HTTPS 443</text>
+<g><rect x="40" y="345" width="1200" height="130" rx="12" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="56" y="375" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Systems Manager control and message services</text>
+<text x="56" y="403" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">ssm + ssmmessages • IAM permissions • Session logging / auditing</text>
+<text x="56" y="427" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Private interface endpoints or approved NAT egress • Endpoint SG allows TCP 443 from node SGs</text>
+</g>
+<path d="M300,545 L300,475" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="310" y="466" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">Agent outbound 443</text>
+<path d="M980,545 L980,475" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="990" y="466" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">Agent outbound 443</text>
+<g><rect x="40" y="545" width="520" height="140" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="56" y="575" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Private Jenkins / monitoring EC2</text>
+<text x="56" y="603" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Browser UI via Session Manager forwarding</text>
+<text x="56" y="627" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Bind management UIs to loopback / private network</text>
+</g>
+<g><rect x="720" y="545" width="520" height="140" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="736" y="575" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Private application EC2</text>
+<text x="736" y="603" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">SSM Agent Online • IMDSv2 instance role</text>
+<text x="736" y="627" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Run Command checks scripts by commit + SHA256</text>
+</g>
+<g><rect x="40" y="735" width="1200" height="85" rx="12" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="56" y="765" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Inbound administration rule</text>
+<text x="56" y="793" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">NONE. Do not add public 22, 8080, 9000, 3000, 9090 or 3100 rules.</text>
+</g>
+<text x="40" y="862" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#64748b">Original ApexForge360 diagram • Reference examples only • No live AWS inventory verified</text>
+</svg>

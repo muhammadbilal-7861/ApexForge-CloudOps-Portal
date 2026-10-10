@@ -12,8 +12,6 @@
     "subnet-00000000000000002"
   ],
   "APP_SECURITY_GROUP_ID": "sg-00000000000000001",
-  "LAUNCH_TEMPLATE_ID": "lt-00000000000000001",
-  "ASG_NAME": "example-cloudops-asg",
   "TARGET_GROUP_ARN": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/example-cloudops/0000000000000001",
   "TARGET_GROUP_NAME": "example-cloudops",
   "ALB_NAME": "example-cloudops-alb",
@@ -27,35 +25,6 @@
   "SESSION_COOKIE_SECURE": "true",
   "LEGACY_CONTAINER_NAME": "cloudops-flask",
   "LEGACY_IMAGE": "cloudops-flask:1.1",
-  "reviewed_ami": {
-    "region": "us-east-1",
-    "image_id": "ami-00000000000000001",
-    "owner_id": "099720109477",
-    "owner_alias": "amazon",
-    "name": "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260923",
-    "architecture": "x86_64",
-    "creation_date": "2026-09-23T11:57:01.000Z",
-    "ssm_parameter": "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
-    "ssm_parameter_version": 77,
-    "review_date": "2026-10-04",
-    "source_template_version": 5,
-    "rejected_image_id": "ami-00000000000000002",
-    "application_security_group": "sg-00000000000000001",
-    "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/ExampleAppRole",
-    "image_location": "amazon/ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260923",
-    "image_ssm_parameter": "aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id",
-    "root_snapshot_id": "snap-00000000000000001",
-    "private_subnets": [
-      "subnet-00000000000000001",
-      "subnet-00000000000000002"
-    ],
-    "asg_propagated_tags": {
-      "Environment": "Development",
-      "Monitoring": "enabled",
-      "Name": "example-cloudops-app",
-      "Project": "ExampleCloudOps",
-      "Role": "app"
-    }
-  },
-  "INSTANCE_PROFILE_NAME": "ExampleAppRole"
+  "INSTANCE_PROFILE_NAME": "ExampleAppRole",
+  "ALLOW_INITIAL_INSTALL": "false"
 }

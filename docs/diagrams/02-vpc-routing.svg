@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" role="img">
+<title>Six-subnet VPC and routing</title>
+<desc>Example CIDRs / AZ labels • Choose two available AZs in your own region • No live IDs</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475569"/></marker></defs>
+<rect width="1280" height="900" fill="#f8fafc"/>
+<text x="40" y="48" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#0f172a">Six-subnet VPC and routing</text>
+<text x="40" y="80" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" fill="#475569">Example CIDRs / AZ labels • Choose two available AZs in your own region • No live IDs</text>
+<g><rect x="40" y="120" width="580" height="110" rx="12" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="56" y="150" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ A — public 10.0.1.0/24</text>
+<text x="56" y="178" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Public route table: 10.0.0.0/16 → local</text>
+<text x="56" y="202" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">0.0.0.0/0 → IGW • ALB + optional same-AZ NAT</text>
+</g>
+<g><rect x="40" y="300" width="580" height="130" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="56" y="330" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ A — private app 10.0.11.0/24</text>
+<text x="56" y="358" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Application route table: VPC → local</text>
+<text x="56" y="382" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Optional 0.0.0.0/0 → same-AZ NAT</text>
+<text x="56" y="406" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Interface endpoints + S3 gateway endpoint alternative</text>
+</g>
+<path d="M320,300 L320,230" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="330" y="221" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">NAT egress when configured</text>
+<g><rect x="40" y="510" width="580" height="110" rx="12" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="56" y="540" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ A — private DB 10.0.21.0/24</text>
+<text x="56" y="568" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Database route table: 10.0.0.0/16 → local only</text>
+<text x="56" y="592" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Single DB subnet group covers both DB subnets</text>
+</g>
+<g><rect x="660" y="120" width="580" height="110" rx="12" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="676" y="150" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ B — public 10.0.2.0/24</text>
+<text x="676" y="178" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Public route table: 10.0.0.0/16 → local</text>
+<text x="676" y="202" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">0.0.0.0/0 → IGW • ALB + optional same-AZ NAT</text>
+</g>
+<g><rect x="660" y="300" width="580" height="130" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="676" y="330" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ B — private app 10.0.12.0/24</text>
+<text x="676" y="358" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Application route table: VPC → local</text>
+<text x="676" y="382" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Optional 0.0.0.0/0 → same-AZ NAT</text>
+<text x="676" y="406" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Interface endpoints + S3 gateway endpoint alternative</text>
+</g>
+<path d="M940,300 L940,230" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<text x="950" y="221" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" fill="#0f172a">NAT egress when configured</text>
+<g><rect x="660" y="510" width="580" height="110" rx="12" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="676" y="540" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">AZ B — private DB 10.0.22.0/24</text>
+<text x="676" y="568" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Database route table: 10.0.0.0/16 → local only</text>
+<text x="676" y="592" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Single DB subnet group covers both DB subnets</text>
+</g>
+<g><rect x="40" y="680" width="1200" height="140" rx="12" fill="#ede9fe" stroke="#94a3b8"/>
+<text x="56" y="710" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Reachability matters</text>
+<text x="56" y="738" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">IGW attached to VPC; a private EC2 has no public IP and cannot use IGW directly.</text>
+<text x="56" y="762" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Endpoints: SSM / ssmmessages / ECR API + DKR / Secrets Manager / CloudWatch Logs; S3 for ECR layers.</text>
+<text x="56" y="786" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Endpoint-only hosts still need approved mirrors or egress for Ubuntu packages, Docker registry and GitHub.</text>
+<text x="56" y="810" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">DNS support / hostnames and endpoint private DNS must be enabled.</text>
+</g>
+<text x="40" y="862" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#64748b">Original ApexForge360 diagram • Reference examples only • No live AWS inventory verified</text>
+</svg>

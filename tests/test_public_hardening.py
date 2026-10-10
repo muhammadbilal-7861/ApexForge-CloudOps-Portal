@@ -3,10 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 import re
-import subprocess
-import sys
 
 import pytest
 
@@ -52,7 +49,6 @@ def test_independent_account_region_repository_and_iam_are_parameterized():
                     APP_ROLE_NAME="IndependentApp", INSTANCE_PROFILE_NAME="IndependentApp",
                     INSTANCE_PROFILE_ARN="arn:aws:iam::234567890123:instance-profile/IndependentApp",
                     TARGET_GROUP_ARN="arn:aws:elasticloadbalancing:us-west-2:234567890123:targetgroup/tg-cloudops-app/0000000000000001")
-    document["reviewed_ami"].update(region=document["AWS_REGION"], instance_profile_arn=document["INSTANCE_PROFILE_ARN"])
     validate(document)
     values = environment(document)
     assert values["ECR_URI"] == "234567890123.dkr.ecr.us-west-2.amazonaws.com/independent-cloudops"
@@ -61,42 +57,14 @@ def test_independent_account_region_repository_and_iam_are_parameterized():
     template = json.loads((ROOT / "deploy/iam/jenkins-cloudops-deploy-policy.json").read_text())
     policy = helper.render(template, document)
     statements = {item["Sid"]: item for item in policy["Statement"]}
-    assert statements["PassOnlyCloudOpsAppRoleToEc2"]["Resource"] == "arn:aws:iam::234567890123:role/IndependentApp"
+    assert statements["SendCommandsToApprovedCanary"]["Resource"][1] == "arn:aws:ec2:us-west-2:234567890123:instance/i-00000000000000001"
     encoded = json.dumps(policy)
     assert "${" not in encoded
     assert "123456789012" not in encoded
 
 
-def test_independent_bootstrap_renderer_uses_supplied_inventory(tmp_path):
-    document = inventory()
-    document["ECR_REPOSITORY"] = "another-reviewed-repository"
-    document["SOURCE_REPOSITORY"] = "independent-owner/cloudops-lab"
-    source = tmp_path / "inventory.json"
-    source.write_text(json.dumps(document))
-    output = tmp_path / "bootstrap.sh"
-    image = environment(document)["ECR_URI"] + "@sha256:" + "a" * 64
-    commit = "b" * 40
-    result = subprocess.run([sys.executable, str(ROOT / "deploy/render-cloudops-user-data.py"),
-                             "--template", str(ROOT / "deploy/cloudops-user-data.sh.tmpl"),
-                             "--deploy-script", str(ROOT / "deploy/cloudops-deploy.sh"),
-                             "--verify-script", str(ROOT / "deploy/cloudops-verify.sh"),
-                             "--image", image, "--version", commit[:12], "--commit", commit,
-                             "--output", str(output)],
-                            env=dict(os.environ, CLOUDOPS_CONFIG_FILE=str(source)),
-                            capture_output=True, text=True, check=False)
-    assert result.returncode == 0, result.stderr
-    script = output.read_text()
-    assert f'IMAGE_URI="{image}"' in script
-    assert "independent-owner/cloudops-lab" in script
-    assert "@@" not in script
-    assert len(output.read_bytes()) <= 16384
 
 
-def test_ami_owner_and_security_tags_cannot_be_relaxed():
-    document = inventory()
-    document["reviewed_ami"]["owner_id"] = "123456789012"
-    with pytest.raises(ValueError, match="owner_id"):
-        validate(document)
 
 
 def test_public_jenkins_default_needs_approval_before_any_aws_write():

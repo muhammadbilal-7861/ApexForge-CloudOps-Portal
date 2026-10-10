@@ -1,13 +1,10 @@
-# Architecture and trust boundaries
+# Reference architecture
 
-The Flask application uses hashed passwords, Flask-Login, CSRF protection and SQLAlchemy parameter binding. Gunicorn runs as a non-root user. `/health` is liveness, `/ready` checks DB connectivity, and `/metrics` is private monitoring data; endpoints alone are not proof of a fully healthy deployment.
+![Complete architecture](diagrams/01-architecture.png)
+[Editable SVG](diagrams/01-architecture.svg) · [Full visual atlas](MASTER-GUIDE.md)
 
-Local Compose publishes only localhost port 5000, keeps MariaDB private and uses synthetic data. Optional Prometheus scrapes the application; local monitoring must not scrape original AWS hosts.
+The diagrams describe an independent learning account, not verified live infrastructure. VPC10.0.0.0/16 contains public10.0.1.0/24 and10.0.2.0/24, private app10.0.11.0/24 and10.0.12.0/24, and private DB10.0.21.0/24 and10.0.22.0/24 across two example AZs. One private app EC2 serves5000 behind an HTTPS ALB. Tools and observability EC2s use distinct SGs/roles in private app subnets.
 
-AWS laboratory resources are supplied by the operator: private application subnets, ALB-to-app security group ingress, RDS, Secrets Manager, ECR, SSM, CloudWatch, IAM profiles, Jenkins and Sonar. Private subnets need reviewed NAT/endpoints for package repositories, GitHub, ECR, Secrets Manager, SSM and CloudWatch. Verify DNS, routing, quotas and costs before approval.
+One Single-AZ MariaDB RDS instance belongs to a DB subnet group with both DB subnets; there is no second DB instance. Database tables have local-only routes. App egress uses reviewed NAT or AWS endpoints plus approved package/source mirrors. Session Manager provides administrator access; Run Command provides deployment. No port22 or bastion.
 
-Delivery checks the same platform/image built and scanned; immutable tags are reused only when image IDs match. Deployment uses the published digest. SSM downloads commit-pinned scripts, verifies SHA256 and targets exact inventoried instances. New canary uses host networking to access IMDSv2; the old bridge service continues on port 5000 until candidate verification succeeds on 5001. Cutover retains the exact original container and Docker configuration for verified rollback.
-
-ASG first boot refuses pre-existing runtime/container state, blocks inbound application traffic with nftables, starts diagnostics, validates secrets and digest, verifies Docker health/readiness/application route, then opens the gate and creates a protected success marker. A clean explicit launch allowlist excludes inherited Placement/SubnetId, requires IMDSv2 and is read back from AWS. Both subnets are DryRun-checked. Initial capacity is 1/1/1; failed initial rollout safely returns to zero and never starts the contaminated source AMI. The existing canary is retained.
-
-Historical canary acceptance succeeded; Ubuntu ASG acceptance is incomplete. Simulated tests cannot establish real networking, IAM, readiness or operational availability. Treat live promotion as pending the checklist in DEPLOYMENT.md.
+Candidate-first release on localhost5001 retains the serving5000 container until verification. Cutover rechecks canonical identity/config; failures restore exact prior container/network/ports and verify HTTP plus ALB recovery. Initial installation is explicitly approved and has no prior application to restore. Runtime secrets are role-fetched, never image/Git contents. Single-instance outages and cutover interruptions remain architectural limitations.

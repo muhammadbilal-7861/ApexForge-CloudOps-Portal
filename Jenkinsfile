@@ -23,14 +23,10 @@ pipeline {
         )
         choice(
             name: 'DEPLOY_TARGET',
-            choices: ['none', 'canary', 'asg'],
-            description: 'Deployment is opt-in. Canary targets the prepared existing EC2 instance; ASG performs a controlled launch-template rollout.'
+            choices: ['none', 'canary'],
+            description: 'Deployment is opt-in. Canary targets one prepared EC2 instance using candidate-first cutover.'
         )
-        booleanParam(
-            name: 'ASG_AMI_REVIEWED',
-            defaultValue: false,
-            description: 'For ASG only: confirm the pinned official Ubuntu 24.04 LTS image provenance and generated launch-template preview have been reviewed.'
-        )
+
     }
 
     environment {
@@ -400,7 +396,7 @@ pipeline {
                     settings.each { key, value -> env[key] = value.toString() }
                     sh 'bash deploy/assert-deploy-context.sh'
                     timeout(time: 15, unit: 'MINUTES') {
-                        input(message: "Authorize AWS publication and preflight for ${env.GIT_COMMIT_SHORT} in reviewed account ${env.AWS_ACCOUNT_ID}? ASG preflight may create a retained candidate launch-template version, but cannot change capacity.",
+                        input(message: "Authorize AWS publication and preflight for ${env.GIT_COMMIT_SHORT} in reviewed account ${env.AWS_ACCOUNT_ID}?",
                             ok: 'Authorize AWS operations', submitter: env.CLOUDOPS_DEPLOY_APPROVERS,
                             submitterParameter: 'AWS_APPROVED_BY')
                     }
@@ -423,7 +419,7 @@ pipeline {
 
         stage('Authorize opt-in deployment') {
             when {
-                expression { params.DEPLOY_TARGET in ['canary', 'asg'] }
+                expression { params.DEPLOY_TARGET == 'canary' }
             }
             steps {
                 script {
@@ -436,9 +432,6 @@ pipeline {
                         }
                         bash deploy/assert-deploy-context.sh
                     '''
-                    if (params.DEPLOY_TARGET == 'asg' && !params.ASG_AMI_REVIEWED) {
-                        error('ASG deployment requires ASG_AMI_REVIEWED=true after official-image provenance and bootstrap preview review.')
-                    }
                     def digest = sh(
                         script: '''#!/bin/bash
                             set -euo pipefail
@@ -473,29 +466,14 @@ pipeline {
                             bash deploy/collect-cloudops-preflight.sh "$DEPLOY_TARGET"
                         '''
                     }
-                    if (params.DEPLOY_TARGET == 'asg') {
-                        archiveArtifacts artifacts: 'reports/asg-launch-template-preview.json', fingerprint: true
-                        archiveArtifacts artifacts: 'reports/asg-launch-permissions.json', fingerprint: true
-                        archiveArtifacts artifacts: 'reports/asg-launch-candidate.json', fingerprint: true
-                        env.ASG_VALIDATED_VERSION = sh(
-                            script: '''#!/bin/bash
-                                set -euo pipefail
-                                docker run --rm --volumes-from jenkins --workdir "$WORKSPACE" "$PYTHON_IMAGE" \\
-                                    python -c 'import json; print(json.load(open("reports/asg-launch-candidate.json"))["candidateVersion"])'
-                            ''', returnStdout: true
-                        ).trim()
-                        if (!env.ASG_VALIDATED_VERSION.matches('[0-9]+')) {
-                            error('Missing validated ASG candidate version.')
-                        }
-                        echo "Review the launch-template preview before approval: ${env.BUILD_URL}artifact/reports/asg-launch-template-preview.json"
-                    }
+
                 }
             }
         }
 
         stage('Manual deployment approval') {
             when {
-                expression { params.DEPLOY_TARGET in ['canary', 'asg'] }
+                expression { params.DEPLOY_TARGET == 'canary' }
             }
             steps {
                 script {
@@ -505,8 +483,7 @@ pipeline {
                 }
                 timeout(time: 15, unit: 'MINUTES') {
                     input(
-                        message: "Deploy ${env.GIT_COMMIT_SHORT} to ${params.DEPLOY_TARGET}? Architecture and security preflight passed." +
-                            (params.DEPLOY_TARGET == 'asg' ? " Candidate version ${env.ASG_VALIDATED_VERSION}, image ${env.ECR_DEPLOY_IMAGE}. Review ${env.BUILD_URL}artifact/reports/asg-launch-template-preview.json and asg-launch-candidate.json before approving." : ''),
+                        message: "Deploy ${env.GIT_COMMIT_SHORT} to ${params.DEPLOY_TARGET}? Architecture and security preflight passed. Initial installation enabled: ${env.ALLOW_INITIAL_INSTALL}; an empty host has no previous application for rollback.",
                         ok: 'Approve deployment',
                         submitter: env.CLOUDOPS_DEPLOY_APPROVERS,
                         submitterParameter: 'DEPLOY_APPROVED_BY'
@@ -528,21 +505,6 @@ pipeline {
                     printf '{"target":"canary","instance":"%s","commit":"%s","image":"%s","result":"verified"}\\n' \\
                         "$CANARY_INSTANCE_ID" "$GIT_COMMIT_FULL" "$ECR_DEPLOY_IMAGE" > reports/deployment-evidence.json
                 '''
-            }
-        }
-
-        stage('ASG rolling deployment') {
-            when {
-                expression { params.DEPLOY_TARGET == 'asg' }
-            }
-            steps {
-                withEnv(["ASG_AMI_REVIEWED=${params.ASG_AMI_REVIEWED}"]) {
-                    sh '''#!/bin/bash
-                        set -euo pipefail
-                        set +x
-                        bash deploy/cloudops-asg-rollout.sh
-                    '''
-                }
             }
         }
 

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" role="img">
+<title>Security group communication contract</title>
+<desc>Source security groups for internal traffic • Stateful response traffic • No inbound SSH</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475569"/></marker></defs>
+<rect width="1280" height="900" fill="#f8fafc"/>
+<text x="40" y="48" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#0f172a">Security group communication contract</text>
+<text x="40" y="80" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" fill="#475569">Source security groups for internal traffic • Stateful response traffic • No inbound SSH</text>
+<g><rect x="40" y="120" width="1200" height="88" rx="12" fill="#dcfce7" stroke="#94a3b8"/>
+<text x="56" y="150" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Internet → ALB SG</text>
+<text x="56" y="178" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">TCP 443 from clients; optional TCP 80 redirects to HTTPS</text>
+</g>
+<g><rect x="40" y="232" width="1200" height="88" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="56" y="262" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">ALB SG → application SG</text>
+<text x="56" y="290" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">TCP 5000 only; candidate port 5001 binds loopback and is not admitted</text>
+</g>
+<g><rect x="40" y="344" width="1200" height="88" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="56" y="374" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Observability SG → application SG</text>
+<text x="56" y="402" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">TCP 5000 for metrics / ready probes; optional 9100 only if exporter enabled</text>
+</g>
+<g><rect x="40" y="456" width="1200" height="88" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="56" y="486" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Application SG → database SG</text>
+<text x="56" y="514" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">TCP 3306 only; one private MariaDB RDS; no CIDR-wide DB ingress</text>
+</g>
+<g><rect x="40" y="568" width="1200" height="88" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="56" y="598" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Application SG → observability SG</text>
+<text x="56" y="626" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Private Loki TCP 3100 only if Alloy enabled; protect ingestion / TLS as appropriate</text>
+</g>
+<g><rect x="40" y="680" width="1200" height="88" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="56" y="710" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">Node SGs → endpoint SG / approved egress</text>
+<text x="56" y="738" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">TCP 443 for AWS APIs; DNS through VPC resolver; package egress explicitly reviewed</text>
+</g>
+<text x="40" y="862" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#64748b">Original ApexForge360 diagram • Reference examples only • No live AWS inventory verified</text>
+</svg>

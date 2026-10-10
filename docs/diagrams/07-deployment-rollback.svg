@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" role="img">
+<title>Immutable ECR → private EC2 cutover and rollback</title>
+<desc>Candidate-first • Same EC2 instance • Exact canonical container identity and configuration retained</desc>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475569"/></marker></defs>
+<rect width="1280" height="900" fill="#f8fafc"/>
+<text x="40" y="48" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#0f172a">Immutable ECR → private EC2 cutover and rollback</text>
+<text x="40" y="80" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" fill="#475569">Candidate-first • Same EC2 instance • Exact canonical container identity and configuration retained</text>
+<g><rect x="80" y="110" width="1120" height="84" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="96" y="140" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">1 • Publish / verify ECR</text>
+<text x="96" y="168" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Immutable SHA tag → digest • Built/scanned image ID matches published image</text>
+</g>
+<path d="M640,194 L640,222" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<g><rect x="80" y="222" width="1120" height="84" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="96" y="252" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">2 • Preapproval SSM checks</text>
+<text x="96" y="280" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Runtime file root:root 0600 • Stable signing secret • ECR / ALB permissions • SSM Online</text>
+</g>
+<path d="M640,306 L640,334" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<g><rect x="80" y="334" width="1120" height="84" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="96" y="364" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">3 • Candidate on localhost :5001</text>
+<text x="96" y="392" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Host network / IAM role • Health + readiness + Docker + route • Previous :5000 stays serving</text>
+</g>
+<path d="M640,418 L640,446" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<g><rect x="80" y="446" width="1120" height="84" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="96" y="476" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">4 • Cutover only after candidate succeeds</text>
+<text x="96" y="504" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Recheck prior full ID / name / image / network / ports • Stop and retain prior container</text>
+</g>
+<path d="M640,530 L640,558" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<g><rect x="80" y="558" width="1120" height="84" rx="12" fill="#dbeafe" stroke="#94a3b8"/>
+<text x="96" y="588" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">5 • Production on :5000</text>
+<text x="96" y="616" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Same approved digest • Docker health / /health / /ready / application route / ALB healthy</text>
+</g>
+<path d="M640,642 L640,670" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<g><rect x="80" y="670" width="1120" height="84" rx="12" fill="#fef3c7" stroke="#94a3b8"/>
+<text x="96" y="700" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" fill="#0f172a">6 • Failure recovery</text>
+<text x="96" y="728" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#0f172a">Candidate failure leaves prior untouched; production failure restores exact original container</text>
+</g>
+<text x="40" y="862" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" fill="#64748b">Original ApexForge360 diagram • Reference examples only • No live AWS inventory verified</text>
+</svg>

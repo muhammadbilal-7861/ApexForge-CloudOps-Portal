@@ -9,7 +9,10 @@ import re
 import shlex
 
 
-from cloudops_ami import CONFIG, ENV
+from cloudops_config import load, environment
+
+CONFIG = load()
+ENV = environment(CONFIG)
 
 IMAGE_RE = re.compile(re.escape(ENV["ECR_URI"]) + r"@sha256:[0-9a-f]{64}\Z")
 
@@ -31,8 +34,8 @@ def render(args: argparse.Namespace) -> dict:
         raise ValueError("invalid deployment script checksum")
     if not args.instance_ids or any(not re.fullmatch(r"i-[0-9a-f]{8,17}", item) for item in args.instance_ids):
         raise ValueError("invalid or missing SSM instance IDs")
-    if args.mode == "deploy" and len(args.instance_ids) != 1:
-        raise ValueError("canary deploy must target exactly one instance")
+    if len(args.instance_ids) != 1:
+        raise ValueError("deployment must target exactly one instance")
     if args.mode == "preflight" and len(args.instance_ids) != 1:
         raise ValueError("canary preflight must target exactly one instance")
 
@@ -91,8 +94,6 @@ def render(args: argparse.Namespace) -> dict:
     )
     if args.require_target_healthy:
         verify += " --require-target-healthy"
-    if getattr(args, "require_bootstrap_complete", False):
-        verify += " --require-bootstrap-complete"
     commands.append(verify)
 
     return {
@@ -112,7 +113,6 @@ def main() -> None:
     parser.add_argument("--deploy-sha256", required=True)
     parser.add_argument("--verify-sha256", required=True)
     parser.add_argument("--preflight-sha256", required=True)
-    parser.add_argument("--require-bootstrap-complete", action="store_true")
     parser.add_argument("--target-group-arn", required=True)
     parser.add_argument("--instance-ids", nargs="+", required=True)
     parser.add_argument("--require-target-healthy", action="store_true")

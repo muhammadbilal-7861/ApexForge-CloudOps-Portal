@@ -198,7 +198,7 @@
     },
     {
       "id": 9,
-      "title": "Scrapeable discovered app instances (not ALB/ASG health)",
+      "title": "Scrapeable discovered app instances (not ALB health)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
