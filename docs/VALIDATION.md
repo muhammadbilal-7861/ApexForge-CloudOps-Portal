@@ -12,7 +12,7 @@ Date:2026-10-10. Branch:feat/single-ec2-illustrated-guide. Implementation tested
 | IAM | Both policy templates parsed/rendered offline; no unresolved placeholders; exact-instance SSM/no compute mutation |
 | Compose/fresh clone | Example config valid; fresh committed clone built and started with no AWS credentials/inventory |
 | Local app | /health,/ready,/metrics HTTP200; real CSRF-enabled registration/login/record write passed |
-| Visual guide |14 labs;91 relative links;38 Bash example blocks parsed; YAML/JSON examples parsed |
+| Visual guide |14 labs;92 relative links;38 Bash example blocks parsed; YAML/JSON examples parsed |
 | Diagrams | Eight PNG1280x900 and editable SVG pairs; XML/header checks and all eight visual inspections passed |
 | Gitleaks8.29.1 | Zero findings, all reachable history and committed current tree |
 | TruffleHog3.99.2 | One unverified JDBC candidate in history/current tree; private review confirms documented loopback URL without credentials |
