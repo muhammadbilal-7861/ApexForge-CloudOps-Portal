@@ -41,6 +41,8 @@ Use [Canonical's official image discovery procedure](https://ubuntu.com/aws/docs
 
 Linux agent with Docker CLI, Bash, Git and Python 3.12. Jenkins container is named `jenkins`, workspace is a named volume and `/var/run/docker.sock` points to the host daemon. This grants significant host control: isolate agents, restrict job edits and never execute untrusted PRs with privileged credentials/socket access.
 
+`--volumes-from jenkins` exposes the Jenkins volume, not merely the checkout directory; root tool containers may also read controller secrets and inherited bind mounts. This topology is appropriate only for trusted laboratory code on isolated agents. Do not run fork PRs on this agent or give public CI a deployment role. Production separation of controller, untrusted CI and protected deployment agents requires an independently reviewed Jenkins/volume/IAM design; an opt-in parameter is not a sandbox for malicious code.
+
 Required plugins: Pipeline/Declarative, Git, Credentials Binding, SonarQube Scanner for Jenkins, JUnit, Pipeline Utility Steps (`readJSON`). Configure Sonar server **sonarqube**, token credential ID **sonarqube-token**, existing project key **ApexForge-CloudOps-Portal**, and webhook `<jenkins-url>/sonarqube-webhook/`; protect the webhook with an independently configured secret where supported. No tokens belong in Git.
 
 Set private `CLOUDOPS_CONFIG_FILE` and `CLOUDOPS_DEPLOY_APPROVERS` (designated Jenkins IDs) administratively. Scanners use `--volumes-from jenkins`; Sonar runs with host networking and Jenkins UID/GID, preserving `.scannerwork/report-task.txt`. Trivy uses a separate named cache volume.

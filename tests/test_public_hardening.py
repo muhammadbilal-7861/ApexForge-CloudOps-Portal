@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -202,3 +203,30 @@ def test_csrf_rejects_missing_token_when_enabled(app, client):
     response = client.post("/login", data={"username": "fixture", "password": "fixture"})
     assert response.status_code == 400
     assert response.headers["X-Request-ID"]
+
+
+def test_browser_forms_submit_valid_csrf_tokens(app, client):
+    app.config["WTF_CSRF_ENABLED"] = True
+    def token(path):
+        response = client.get(path)
+        assert response.status_code == 200
+        matches = re.findall(r'<input[^>]*name="csrf_token"[^>]*value="([^"]+)"', response.get_data(as_text=True))
+        assert matches, "Browser forms must submit a hidden CSRF token"
+        return matches[0]
+    registration_token = token("/register")
+    response = client.post("/register", data={"username": "browser-demo", "email": "browser@example.invalid",
+                                              "password": "development-only-password", "csrf_token": registration_token})
+    assert response.status_code == 302
+    login_token = token("/login")
+    response = client.post("/login", data={"username": "browser-demo", "password": "development-only-password",
+                                           "csrf_token": login_token})
+    assert response.status_code == 302
+    record_token = token("/records/add")
+    response = client.post("/records/add", data={"title": "Browser regression", "description": "synthetic",
+                                                 "csrf_token": record_token})
+    assert response.status_code == 302
+    delete_token = token("/records")
+    response = client.post("/records/1/delete", data={"csrf_token": delete_token})
+    assert response.status_code == 302
+    upload_token = token("/upload")
+    assert upload_token

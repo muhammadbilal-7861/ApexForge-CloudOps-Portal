@@ -4,7 +4,7 @@ Validated 2026-10-10 on the feature branch, without accessing live AWS or changi
 
 | Check | Result |
 | --- | --- |
-| Full pytest, isolated Linux container, no network/host socket/credentials | **201 passed in 82.17s**, no skips |
+| Full pytest, isolated Linux container, no network/host socket/credentials | **202 passed in 79.37s**, no skips |
 | Gitleaks 8.29.1 reachable history and current tracked tree | **0 findings** |
 | TruffleHog 3.99.2 Git/all-reachable-blob/current-tree scans, verification disabled | **0 findings** |
 | Manual reachable-object inventory | 38 baseline commits / 202 distinct blobs; runtime URI constructor classified as non-secret |
@@ -19,7 +19,7 @@ Validated 2026-10-10 on the feature branch, without accessing live AWS or changi
 | Monitoring YAML/JSON/metrics/privacy fixtures | Passed |
 | Original private identifier check | 13 original resource IDs and original account absent from current tracked tree |
 
-The 22 new tests cover non-deployable public examples, missing/invalid/cross-account configuration, independent inventory/rendering/IAM, AMI owner enforcement, safe CI approval ordering, stable production signing keys, path/header/secret/SQL log redaction, sanitized uploads, CSRF rejection and development-only idempotent demo data. Existing canary, bridge/dual-stack networking, canonical identity, immutable ECR, permissions, first-boot, per-instance ASG and rollback regressions remain intact.
+The 23 new tests cover non-deployable public examples, missing/invalid/cross-account configuration, independent inventory/rendering/IAM, AMI owner enforcement, safe CI approval ordering, stable production signing keys, path/header/secret/SQL log redaction, sanitized uploads, CSRF rejection/browser form submission and development-only idempotent demo data. Existing canary, bridge/dual-stack networking, canonical identity, immutable ECR, permissions, first-boot, per-instance ASG and rollback regressions remain intact.
 
 ## Reproduction
 
