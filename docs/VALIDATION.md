@@ -18,6 +18,7 @@ Validated 2026-10-10 on the feature branch, without accessing live AWS or changi
 | JSON Schema and semantic configuration checks | Passed for public example and synthetic fixture |
 | Monitoring YAML/JSON/metrics/privacy fixtures | Passed |
 | Original private identifier check | 13 original resource IDs and original account absent from current tracked tree |
+| Fresh clone of committed feature branch, public examples only | Passed: local build, MariaDB, demo data, health/readiness/metrics, CSRF-enabled registration/login and record write; no AWS credentials or private inventory |
 
 The 23 new tests cover non-deployable public examples, missing/invalid/cross-account configuration, independent inventory/rendering/IAM, AMI owner enforcement, safe CI approval ordering, stable production signing keys, path/header/secret/SQL log redaction, sanitized uploads, CSRF rejection/browser form submission and development-only idempotent demo data. Existing canary, bridge/dual-stack networking, canonical identity, immutable ECR, permissions, first-boot, per-instance ASG and rollback regressions remain intact.
 
@@ -31,4 +32,4 @@ The complete suite was packaged from tracked source into a disposable test conta
 
 Groovy compilation validates syntax, not Jenkins plugin availability/Declarative execution. Configure Pipeline Utility Steps, Sonar credentials/server/webhook, restricted approvals, private inventory and trusted agents administratively, then run CI with AWS_OPERATIONS=false / DEPLOY_TARGET=none after review. Sonar live acceptance and independent AWS/Ubuntu ASG acceptance remain pending. No EC2 instance was launched, no capacity changed, no IAM policy applied and no deployment performed.
 
-Fresh-clone verification is recorded after the implementation commit so the rehearsal uses committed source and public examples only.
+Fresh-clone rehearsal used committed application revision `b7dafb6`, copied only `.env.example` to `.env`, and followed README startup/init/seed commands in a separate owned Compose project. `/health`, `/ready` and `/metrics` returned HTTP 200. Registration, login and record creation succeeded with real submitted CSRF fields against MariaDB. The app had `USE_AWS_SECRETS=false`, no AWS keys/session token and no original/private deployment inventory. The rehearsal stopped only its own containers; its local data volume was retained.
